@@ -3,9 +3,11 @@ function Write-FlintEvent {
     if (-not $Session -or -not $Session.TrajectoryPath) { return }
     try {
         $Session.EventSequence++
+        # One clock reading keeps timestamp - elapsed_ms equal to the session start for resume.
+        $now = [datetime]::UtcNow
         $record = [ordered]@{
-            timestamp = [datetime]::UtcNow.ToString('o'); session_id = $Session.Id; sequence = $Session.EventSequence
-            elapsed_ms = [long](([datetime]::UtcNow - $Session.Started).TotalMilliseconds)
+            timestamp = $now.ToString('o'); session_id = $Session.Id; sequence = $Session.EventSequence
+            elapsed_ms = [long](($now - $Session.Started).TotalMilliseconds)
             event = $Type; data = Protect-FlintValue $Session $Data
         }
         $json = ConvertTo-Json -InputObject $record -Depth 64 -Compress

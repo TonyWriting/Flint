@@ -6,6 +6,12 @@ function New-TestResponse {
     @{ status = 'completed'; output = $Items; usage = @{ input_tokens = 10; output_tokens = 5; input_tokens_details = @{ cached_tokens = 3 }; output_tokens_details = @{ reasoning_tokens = 2 } } }
 }
 
+function Reset-TestConversation {
+    # Each case starts from an empty conversation, as a new Flint session would.
+    $Session.History = @()
+    $Session.LastInputTokens = $null; $Session.LastOutputTokens = $null; $Session.EstimatedTokens = 0
+}
+
 function Invoke-RestMethod {
     param($Method, $Uri, $Headers, $TimeoutSec, $MaximumRedirection, $ErrorAction, $ContentType, $Body, $OutFile)
     Assert-True ($Method -eq 'Post' -and $Uri -eq 'https://test.services.ai.azure.com/openai/v1/responses' -and $Uri -ceq $script:Session.ApiEndpoint) 'POST directly to the configured Responses endpoint without appending another suffix.'
@@ -78,35 +84,35 @@ try {
     Assert-Throws { Invoke-AgentResponse $Session @{} } 'Azure OpenAI request failed*'
     $script:InvalidJson = $false
 
-    Clear-AgentHistory $Session
+    Reset-TestConversation
     $script:Responses = @((New-TestResponse @(
         @{ type = 'message'; role = 'assistant'; content = @() },
         @{ type = 'message'; role = 'assistant'; content = @() }
     )))
     Assert-Throws { Invoke-AgentTurn $Session 'Answer.' 1 } '*neither text nor tool calls*'
 
-    Clear-AgentHistory $Session
+    Reset-TestConversation
     $script:Responses = @((New-TestResponse @($read, $invalid)))
     Assert-Throws { Invoke-AgentTurn $Session 'Read.' 1 } 'Stopped after 1*'
     Assert-True (@($Session.History | Where-Object { $_.type -eq 'function_call_output' }).Count -eq 2) 'Preserve all results at the model-call limit.'
-    Clear-AgentHistory $Session
+    Reset-TestConversation
     $beforeIncomplete = Get-Content -LiteralPath (Join-Path $WorkRoot 'report.md') -Raw
     $incompleteWrite = @{ type = 'function_call'; call_id = 'incomplete_write'; name = 'write_file'; arguments = '{"path":"report.md","content":"must not be written"}' }
     $script:Responses = @(@{ status = 'incomplete'; output = @($incompleteWrite); incomplete_details = @{ reason = 'max_output_tokens' } })
     Assert-Throws { Invoke-AgentTurn $Session 'Edit.' 2 } '*did not complete*'
     Assert-True ($Session.History.Count -eq 1) 'Incomplete responses cannot invoke tools.'
     Assert-True ((Get-Content -LiteralPath (Join-Path $WorkRoot 'report.md') -Raw) -ceq $beforeIncomplete) 'Do not apply writes from incomplete model output.'
-    Clear-AgentHistory $Session
+    Reset-TestConversation
     $script:Responses = @((New-TestResponse @($read, $read)))
     Assert-Throws { Invoke-AgentTurn $Session 'Read.' 2 } '*duplicate*'
     Assert-True ($Session.History.Count -eq 1) 'Reject an entire malformed tool batch.'
-    Clear-AgentHistory $Session
+    Reset-TestConversation
     $Session.MaxToolCalls = 1
     $script:Responses = @((New-TestResponse @($read, $invalid)))
     Assert-Throws { Invoke-AgentTurn $Session 'Read.' 2 } '*Tool-call limit*'
     $outputs = @($Session.History | Where-Object { $_.type -eq 'function_call_output' })
     Assert-True ($outputs.Count -eq 2 -and (ConvertFrom-Json $outputs[1].output).status -eq 'skipped') 'Pair skipped calls at the tool-call limit.'
-    Clear-AgentHistory $Session
+    Reset-TestConversation
     $Session.ContextWindow = 4100
     $before = $Requests.Count
     Assert-Throws { Invoke-AgentTurn $Session 'Read.' 2 } '*Estimated context limit*'
@@ -118,7 +124,7 @@ try {
     Assert-True (-not $rawLog.Contains('test-api-key') -and -not $rawLog.Contains('hidden-value')) 'Never persist credentials in the trajectory.'
     $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
     for ($i = 0; $i -lt $events.Count; $i++) { Assert-True ($events[$i].sequence -eq ($i + 1)) 'Append sequential, independently parseable JSON events.' }
-    foreach ($type in @('session_started', 'user_input', 'model_request', 'model_response', 'model_error', 'tool_started', 'tool_finished', 'tool_skipped', 'history_cleared', 'turn_stopped')) {
+    foreach ($type in @('session_started', 'user_input', 'model_request', 'model_response', 'model_error', 'tool_started', 'tool_finished', 'tool_skipped', 'turn_stopped')) {
         Assert-True ($type -in $events.event) "Record $type."
     }
     Assert-True ('model_limit' -in $events.data.reason -and 'tool_limit' -in $events.data.reason -and 'completed' -in $events.data.reason) 'Record distinct stop reasons.'

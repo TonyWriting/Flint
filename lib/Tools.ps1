@@ -35,6 +35,8 @@ function Invoke-AgentTool {
         }
         # Human approval time is outside the execution timeout.
         $deadline = ([datetime]::UtcNow).AddSeconds($Session.ToolTimeoutSec)
+        # Reads stop at once; a change runs to completion so its outcome stays known.
+        $Session.StopDeferred = -not ($permission.read_only -or $Name -cin @('list_files', 'read_file', 'read_result'))
         for ($attempt = 0; $permission.allowed -and $attempt -le 3; $attempt++) {
             $remaining = ($deadline - [datetime]::UtcNow).TotalSeconds
             if ($remaining -le 0) {
@@ -60,6 +62,7 @@ function Invoke-AgentTool {
         if ($Session.LogFailed) { throw }
         $result = @{ status = 'error'; exit_code = $null; output = $_.Exception.Message; retryable = $false }
     } finally {
+        $Session.StopDeferred = $false
         if (-not $result) { $result = @{ status = 'cancelled'; exit_code = $null; output = 'Tool interrupted; verify actual state before repeating any write.'; retryable = $false } }
         $result = Protect-FlintValue $Session $result
         $result.duration_ms = Get-FlintElapsedMs $started
@@ -93,6 +96,9 @@ function Invoke-FlintWorker {
         if ($Name -cin @('azure_request', 'keyvault_list_secrets')) { $authentication.AzureAccessToken = $AzureAccessToken }
         $native = Invoke-FlintProcess -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
             -ArgumentList $workerArguments -TimeoutSec $TimeoutSec -WorkingDirectory $Session.Root -Session $Session @authentication
+        if ($native.status -eq 'stopped') {
+            return @{ status = 'stopped'; exit_code = $null; output = 'Stopped by the user before the tool finished. No result is available.'; retryable = $false; duration_ms = $native.duration_ms }
+        }
         if ($native.status -ne 'ok') {
             $detail = 'Tool worker stopped: ' + $native.status + '. ' + $native.stderr
             if ($Name -in @('write_file', 'edit_file', 'create_directory', 'run_command', 'azure_request')) { $detail += ' The action outcome may be unknown. Query the actual state before proposing another write.' }

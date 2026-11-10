@@ -11,8 +11,10 @@ function Show-FlintSession {
     if ($Session.ContextWindow -gt 0) { $limit = [string]$Session.ContextWindow }
     $lastInput = 'not reported'
     if ($null -ne $Session.LastInputTokens) { $lastInput = [string]$Session.LastInputTokens }
+    $signIn = ''
+    if ($Session.Azure.Provider) { $signIn = Get-FlintAzureProviderName $Session }
     foreach ($line in @(
-        ('Azure: ' + $Session.Azure.Status), ('Azure account: ' + $Session.Azure.Account), ('Azure tenant: ' + $Session.Azure.Tenant),
+        ('Azure: ' + $Session.Azure.Status), ('Azure sign-in: ' + $signIn), ('Azure account: ' + $Session.Azure.Account), ('Azure tenant: ' + $Session.Azure.Tenant),
         ('Context window: ' + $limit), ('Last API input tokens: ' + $lastInput),
         ('Estimated request tokens: ' + $Session.EstimatedTokens), ('Model calls: ' + $Session.ModelCalls),
         ('Session tokens: in {0}, out {1}, cached {2}' -f $Session.InputTokens, $Session.OutputTokens, $Session.CachedTokens),
@@ -23,10 +25,11 @@ function Show-FlintSession {
 function Show-FlintHelp {
     param([hashtable]$Session)
     Write-Host ''
-    Write-Host '  /status  Session details and trajectory path'
-    Write-Host '  /clear   Start a fresh conversation'
-    Write-Host '  /exit    Exit Flint'
-    Write-Host '  Ctrl+C   Stop and exit; save the conversation' -ForegroundColor DarkGray
+    Write-Host '  /status        Session details and trajectory path'
+    Write-Host '  /c, /continue  Continue the task that was stopped'
+    Write-Host '  /exit          Exit Flint'
+    Write-Host '  s              While Flint works: stop the task and keep the conversation' -ForegroundColor DarkGray
+    Write-Host '  Ctrl+C         Stop and exit; save the conversation' -ForegroundColor DarkGray
 }
 
 function Get-FlintToolLabel {
@@ -96,6 +99,9 @@ function Show-FlintHistory {
                     $prefix = '  '
                 }
             } else { Show-FlintAnswer $Session $text }
+        } elseif ($item.role -eq 'developer') {
+            # Flint adds developer notes only when a turn stops early.
+            Write-Host '  Stopped before completion.' -ForegroundColor Yellow
         }
     }
 }
@@ -142,10 +148,18 @@ function Show-FlintExit {
     )) { if ($null -ne $option.Value -and $option.Value -ne $option.Default) { $command += ' -' + $option.Name + ' ' + $option.Value } }
     Write-Host 'To continue this session from the same directory, run:' -ForegroundColor DarkGray
     Write-FlintColoredText (Protect-FlintText $Session ('  ' + $command)) $Session -Color Blue
+    if ($Session.TurnInterrupted) { Write-Host 'Then send /c to continue the interrupted task.' -ForegroundColor DarkGray }
 }
 
 function Show-FlintInterruption {
     param([hashtable]$Session)
     Clear-FlintProgress $Session
     Write-Host 'Interrupted.' -ForegroundColor Yellow
+}
+
+function Show-FlintStopped {
+    param([hashtable]$Session)
+    Clear-FlintProgress $Session
+    Write-Host 'Stopped. Completed steps are kept in the conversation.' -ForegroundColor Yellow
+    Write-Host 'Send a new instruction, or /c to continue the task.' -ForegroundColor DarkGray
 }

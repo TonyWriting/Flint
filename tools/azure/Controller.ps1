@@ -4,7 +4,7 @@ function New-FlintAzureInvocation {
     Assert-FlintAzureRequest $ToolArguments
     if ((Protect-FlintValue $Session $ToolArguments.body) -cne $ToolArguments.body) { throw 'Azure request bodies must not contain credentials.' }
     if ($Session.Azure.Status -ne 'ready') { throw $Session.Azure.Message }
-    if (-not $Session.Azure.Account -or -not $Session.Azure.Tenant) { throw 'Azure CLI identity is unavailable. Restart Flint.' }
+    if (-not $Session.Azure.Account -or -not $Session.Azure.Tenant) { throw 'Azure identity is unavailable. Restart Flint.' }
     return [ordered]@{
         executor = 'azure'; account = $Session.Azure.Account; tenant = $Session.Azure.Tenant
         method = $ToolArguments.method; uri = 'https://management.azure.com' + $ToolArguments.path; body = $ToolArguments.body
@@ -44,7 +44,7 @@ function Invoke-FlintKeyVaultListSecrets {
         if ($result.http_status -eq 401 -or $result.status -eq 'authentication_required') {
             $Session.Azure.KeyVault.Status = 'authentication_required'
             $result.status = 'authentication_required'
-            $result.output = 'Key Vault authentication requires a new sign-in. Restart Flint to run az login.'
+            $result.output = 'Key Vault authentication requires a new sign-in. Restart Flint to sign in to Azure.'
             $result.retryable = $false
         }
         return $result
@@ -52,7 +52,7 @@ function Invoke-FlintKeyVaultListSecrets {
         $message = Protect-FlintText $Session $_.Exception.Message
         if (Test-FlintAzureAuthenticationError $message) {
             if ($Session.Azure.KeyVault) { $Session.Azure.KeyVault.Status = 'authentication_required' }
-            return @{ status = 'authentication_required'; exit_code = $null; output = 'Key Vault authentication requires user interaction. Restart Flint to run az login.'; retryable = $false }
+            return @{ status = 'authentication_required'; exit_code = $null; output = 'Key Vault authentication requires user interaction. Restart Flint to sign in to Azure.'; retryable = $false }
         }
         return @{ status = 'error'; exit_code = $null; output = $message; retryable = $false }
     }
@@ -88,12 +88,12 @@ function Invoke-FlintAzureRequest {
         Update-FlintAzureToken $Session
         $remaining = $TimeoutSec - ((Get-FlintElapsedMs $started) / 1000)
         if ($remaining -le 0) {
-            return @{ status = 'timeout'; exit_code = $null; output = 'The time budget was consumed while obtaining the CLI token. No HTTP request was sent.'; retryable = $false }
+            return @{ status = 'timeout'; exit_code = $null; output = 'The time budget was consumed while obtaining the Azure token. No HTTP request was sent.'; retryable = $false }
         }
         $result = Invoke-FlintWorker $Session azure_request $ToolArguments -TimeoutSec $remaining -CommandInvocation $Invocation -AzureAccessToken $Session.Azure.AccessToken
         if ($result.http_status -eq 401 -or $result.status -eq 'authentication_required') {
             $Session.Azure.Status = 'authentication_required'
-            $Session.Azure.Message = 'Azure authentication is no longer valid. Restart Flint to run az login; no interactive login is attempted during tool calls.'
+            $Session.Azure.Message = 'Azure authentication is no longer valid. Restart Flint to sign in to Azure; no interactive login is attempted during tool calls.'
             $result.status = 'authentication_required'
             $result.output = $Session.Azure.Message
             $result.retryable = $false
@@ -103,7 +103,7 @@ function Invoke-FlintAzureRequest {
         $message = Protect-FlintText $Session $_.Exception.Message
         if (Test-FlintAzureAuthenticationError $message) {
             $Session.Azure.Status = 'authentication_required'
-            $Session.Azure.Message = 'Azure authentication requires user interaction. Restart Flint to run az login; no interactive login is attempted during tool calls.'
+            $Session.Azure.Message = 'Azure authentication requires user interaction. Restart Flint to sign in to Azure; no interactive login is attempted during tool calls.'
             return @{ status = 'authentication_required'; exit_code = $null; output = $Session.Azure.Message; retryable = $false }
         }
         return @{ status = 'error'; exit_code = $null; output = $message; retryable = $false }

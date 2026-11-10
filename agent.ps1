@@ -49,19 +49,21 @@ if ($MyInvocation.InvocationName -ne '.') {
         if ($session.ResumedFrom) { Show-FlintHistory $session }
         if ($Prompt) {
             $answer = Invoke-AgentTurn -Session $session -UserPrompt $Prompt -TurnLimit $MaxTurns
-            Show-FlintAnswer $session $answer
+            if ($null -ne $answer) { Show-FlintAnswer $session $answer }
         } else {
             while ($true) {
                 $userPrompt = Read-FlintPrompt $session
                 if ($null -eq $userPrompt -or $userPrompt -in @('exit', 'quit', '/exit')) { break }
                 if ($userPrompt -eq '/help') { Show-FlintHelp $session; continue }
                 if ($userPrompt -eq '/status') { Show-FlintSession $session -Details; continue }
-                if ($userPrompt -eq '/clear') { Clear-AgentHistory $session; Write-Host 'Conversation cleared.' -ForegroundColor DarkGray; continue }
                 if ([string]::IsNullOrWhiteSpace($userPrompt)) { continue }
-                if ($userPrompt.StartsWith('/')) { Write-Host 'Unknown command. Use /help.' -ForegroundColor Yellow; continue }
+                if ($userPrompt -in @('/c', '/continue')) {
+                    if (@($session.History).Count -eq 0) { Write-Host 'Nothing to continue.' -ForegroundColor DarkGray; continue }
+                    $userPrompt = Get-FlintContinuePrompt
+                } elseif ($userPrompt.StartsWith('/')) { Write-Host 'Unknown command. Use /help.' -ForegroundColor Yellow; continue }
                 try {
                     $answer = Invoke-AgentTurn -Session $session -UserPrompt $userPrompt -TurnLimit $MaxTurns
-                    Show-FlintAnswer $session $answer
+                    if ($null -ne $answer) { Show-FlintAnswer $session $answer }
                 } catch {
                     Show-FlintError $session $_.Exception.Message
                     if ($session.LogFailed) { throw 'Trajectory is unavailable; ending the session.' }

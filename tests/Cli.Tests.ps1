@@ -35,15 +35,16 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     )
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $logs = Join-Path $TestRoot 'cli-logs'
-    $output = @('/help', '/status', '/clear', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $logs -AzureTenant 'contoso.onmicrosoft.com'
+    $output = @('/help', '/status', '/c', '/continue', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $logs -AzureTenant 'contoso.onmicrosoft.com'
     Assert-True ($LASTEXITCODE -eq 0) 'Run the CLI entry point with redirected interactive input.'
     $log = Get-ChildItem -LiteralPath $logs -Filter *.jsonl
     Assert-True (@($log).Count -eq 1) 'Create one trajectory per CLI session.'
     $events = @(Get-Content -LiteralPath $log.FullName -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
-    Assert-True ('history_cleared' -in $events.event -and 'session_stopped' -in $events.event) 'Record interactive clear and normal exit.'
+    Assert-True ('session_stopped' -in $events.event) 'Record a normal exit.'
     Assert-True ($events[-1].data.reason -eq 'exit') 'Record the correct session stop reason.'
     Assert-True (-not (($output -join "`n").Contains('test-api-key'))) 'Keep credentials out of startup output.'
     Assert-True (($output -join "`n").Contains('Trajectory:')) 'Allow the user to request the trajectory path with /status.'
+    Assert-True (@($output | Where-Object { [string]$_ -like '*Nothing to continue.*' }).Count -eq 2) 'Accept /c and /continue, and do not call the model without a conversation.'
     Assert-True (($output -join "`n").Contains('-AzureTenant contoso.onmicrosoft.com')) 'Accept tenant domains at the entry point and preserve the selector in the resume command.'
     $promptLogs = Join-Path $TestRoot 'prompt-logs'
     $output = & $powerShell -NoProfile -NonInteractive -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $promptLogs -WorkRoot $WorkRoot -SinglePrompt

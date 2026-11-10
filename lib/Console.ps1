@@ -48,14 +48,41 @@ function Update-FlintProgress {
     $elapsed = ([datetime]::UtcNow - $Session.Ui.Started).TotalSeconds
     $seconds = [int]($elapsed - ($elapsed % 1))
     if ($seconds -lt 0) { $seconds = 0 }
-    $frame = '  Working ({0}s {1} Ctrl+C to stop and exit)' -f $seconds, [char]0x00b7
-    if ($Session.Ui.Stage -and $Session.Ui.Stage -ne 'Thinking') { $frame += '  ' + $Session.Ui.Stage }
+    if ($Session.StopRequested) { $frame = '  Stopping after the current step ({0}s)' -f $seconds }
+    else {
+        $frame = '  Working ({0}s {1} s to stop {1} Ctrl+C to exit)' -f $seconds, [char]0x00b7
+        if ($Session.Ui.Stage -and $Session.Ui.Stage -ne 'Thinking') { $frame += '  ' + $Session.Ui.Stage }
+    }
     $available = (Get-FlintTerminalWidth) - 1
     if ($frame.Length -gt $available) { $frame = $frame.Substring(0, $available - 3) + '...' }
     if ($frame -ceq $Session.Ui.Frame) { return }
     Clear-FlintProgress $Session
     Write-Host $frame -NoNewline -ForegroundColor DarkGray
     $Session.Ui.Frame = $frame; $Session.Ui.Width = $frame.Length
+}
+
+function Test-FlintStopKey {
+    param([hashtable]$Session)
+    if (-not $Session -or -not $Session.Ui -or -not $Session.Ui.Live) { return $false }
+    if ($Session.StopRequested) { return $true }
+    $pending = $false
+    try { $pending = [Console]::KeyAvailable } catch { return $false }
+    if (-not $pending) { return $false }
+    # ConstrainedLanguage cannot read key values, so choice.exe consumes one key and reports it.
+    # Listing letters and digits discards ordinary keys without a warning beep.
+    $code = $null
+    $savedPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $null = & (Join-Path $env:SystemRoot 'System32\choice.exe') /C sabcdefghijklmnopqrtuvwxyz0123456789 /N /T 1 /D a 2>$null
+        $code = $LASTEXITCODE
+    } catch { return $false }
+    finally { $ErrorActionPreference = $savedPreference }
+    if ($code -ne 1) { return $false }
+    $Session.StopRequested = $true
+    Write-FlintEvent $Session 'stop_requested' @{ deferred = [bool]$Session.StopDeferred } -BestEffort
+    Update-FlintProgress $Session
+    return $true
 }
 
 function Start-FlintTurnUi {
@@ -87,7 +114,15 @@ function Read-FlintPrompt {
     Write-FlintColoredText '> ' $Session -Color Green -NoNewline -KeepColor
     $readCompleted = $false
     try {
-        $promptText = Read-Host
+        while ($true) {
+            $promptText = Read-Host
+            # Redirected input keeps its blank lines; the caller skips them.
+            if ($null -eq $promptText -or -not [string]::IsNullOrWhiteSpace($promptText) -or -not $Session.Ui.Live) { break }
+            # A blank entry reuses the prompt line. Moving the cursor needs ANSI, because
+            # ConstrainedLanguage cannot set RawUI.CursorPosition; otherwise skip only the spacer line.
+            if ($Session.Ui.Ansi) { Write-Host ([string][char]27 + '[1A' + [char]27 + '[2K' + "`r") -NoNewline }
+            Write-FlintColoredText '> ' $Session -Color Green -NoNewline -KeepColor
+        }
         $readCompleted = $true
         return $promptText
     } finally {

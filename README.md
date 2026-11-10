@@ -10,7 +10,7 @@
 
 | 文件 | 职责 | 加载进程 |
 |---|---|---|
-| `tools/azure/Auth.ps1` | Azure CLI 登录、身份检查、token 缓存与刷新 | 主进程 |
+| `tools/azure/Auth.ps1` | 选择 Azure CLI 或 Azure PowerShell 认证来源，登录、身份检查、token 缓存与刷新 | 主进程 |
 | `tools/azure/Controller.ps1` | Azure 调用授权、认证状态处理和 worker 调度 | 主进程 |
 | `tools/azure/Http.ps1` | ARM 请求校验、共享 HTTP 执行和响应处理 | 主进程与 worker |
 | `tools/azure/KeyVault.ps1` | Key Vault 元数据请求校验和响应字段筛选 | 主进程与 worker |
@@ -42,17 +42,34 @@ powershell.exe -NoProfile -File $flint -Prompt 'Summarize the logs in this direc
 powershell.exe -NoProfile -File $flint -Resume '<session-id>'
 ```
 
-文件工具无需额外模块。Azure 工具使用 PATH 中的 Azure CLI 完成认证，再通过 Windows PowerShell 5.1 原生 HTTP 客户端调用 Azure Resource Manager（ARM，Azure 资源管理接口）。Azure CLI 需支持 `az account get-access-token` 的 `expires_on` 字段。Kubernetes 使用 PATH 中已配置的 `kubectl`。设备需允许脚本、Azure CLI、`kubectl` 及 `taskkill.exe` 运行，并具备对应网络访问权限和 TLS 1.2 及以上支持。
+文件工具无需额外模块。Azure 工具先通过 Azure CLI 或 Azure PowerShell 完成认证（见下节），再通过 Windows PowerShell 5.1 原生 HTTP 客户端调用 Azure Resource Manager（ARM，Azure 资源管理接口）。Kubernetes 使用 PATH 中已配置的 `kubectl`。设备需允许脚本、所用的 Azure 认证工具、`kubectl` 及 `taskkill.exe` 运行，并具备对应网络访问权限和 TLS 1.2 及以上支持。
 
 ## Azure 登录与访问范围
 
-启动时先通过 `az account show` 读取 Azure CLI 当前用户身份，再用 `az account get-access-token --tenant <tenant> --resource https://management.azure.com/` 验证登录是否可用。可用时直接复用；需要认证时，在交互终端中最多执行一次 `az login --tenant <tenant> --allow-no-subscriptions`。Flint 直接调用安装好的 `az.cmd` 或 `az.exe`；登录状态由 Azure CLI 的标准缓存管理。
+Azure 认证需要一个**认证来源**，它只负责登录和签发 token，ARM 与 Key Vault 请求始终由 Flint 自己的 HTTP 客户端发送。启动时按以下顺序选择：
 
-本次 Flint 运行固定使用启动时选定的账户和 tenant，认证独立于 subscription。token 在进程内复用，剩余有效期不足 5 分钟时按同一 tenant 从 CLI 缓存重新获取，并核对用户身份。CLI 默认订阅的变化不影响这个 token。若 MFA、Conditional Access 或登录撤销要求再次交互，Azure 工具返回 `authentication_required`，用户重新启动 Flint 完成登录；会话中途不调用 `az login`。Azure RBAC 权限不足返回 HTTP 403，保留当前登录。
+1. PATH 中存在 Azure CLI 的 `az.cmd` 或 `az.exe` 时，使用 **Azure CLI**。
+2. 否则导入 Azure PowerShell 的 `Az.Accounts` 模块，使用 **Azure PowerShell**；只需这一个模块，不需要完整的 `Az`。
+3. 两者都没有时，Azure 工具不可用，提示安装其中之一。
 
-启动参数 `-AzureTenant` 接受 tenant GUID 或完整域名，例如 `contoso.onmicrosoft.com`。省略时使用当前 CLI 用户记录中的 tenant；尚未登录时由登录流程确定 tenant。启动和刷新 token 均无需选择或校验 subscription；每次 ARM 请求在路径中指定目标订阅。
+选择只看是否安装，与登录状态无关；选定后本次运行不再切换。两种来源执行同样的流程：读取当前用户身份，按 tenant 获取 ARM token 验证登录是否可用；可用时直接复用，需要认证时在交互终端中最多登录一次。
 
-Flint 仅在执行登录命令时临时设置 `AZURE_CORE_LOGIN_EXPERIENCE_V2=off`，关闭 CLI 的订阅选择菜单；命令结束后恢复原环境变量。该设置不修改用户的全局 CLI 配置，CLI 自身仍可能在后台发现可访问的订阅。
+| 步骤 | Azure CLI | Azure PowerShell |
+|---|---|---|
+| 读取身份 | `az account show` | `Get-AzContext` |
+| 获取 token | `az account get-access-token --tenant <tenant> --resource <audience>` | `Get-AzAccessToken -TenantId <tenant> -ResourceUrl <audience>` |
+| 登录 | `az login --tenant <tenant> --allow-no-subscriptions` | `Connect-AzAccount -Tenant <tenant>` |
+| 登录状态保存在 | Azure CLI 的标准缓存 | Azure PowerShell 的标准 context 缓存 |
+
+Azure CLI 由 Flint 直接调用，需支持 token 输出中的 `expires_on` 字段。`Az.Accounts` 在 Flint 主进程中导入一次，`Get-AzAccessToken` 需支持 `-TenantId` 和 `-ResourceUrl`；模块支持 `-AsSecureString` 时以 SecureString 取得 token，只在内存中转换。在 ConstrainedLanguage 设备上，`Az.Accounts` 需被设备策略信任，例如 WDAC 允许 Microsoft 签名代码，或 AppLocker 允许模块所在目录（`Install-Module Az.Accounts -Scope AllUsers` 安装到 Program Files）；否则导入失败，Flint 报告 `could not be loaded`。
+
+登录成功后，启动界面显示 `Signed in to Azure as <account> (tenant <tenant>, via Azure CLI)`，末尾标明认证来源。
+
+本次 Flint 运行固定使用启动时选定的账户和 tenant，认证独立于 subscription。token 在进程内复用，剩余有效期不足 5 分钟时按同一 tenant 从认证来源的缓存重新获取，并核对用户身份。认证来源中默认订阅的变化不影响这个 token。若 MFA、Conditional Access 或登录撤销要求再次交互，Azure 工具返回 `authentication_required`，用户重新启动 Flint 完成登录；会话中途不再登录。Azure RBAC 权限不足返回 HTTP 403，保留当前登录。
+
+启动参数 `-AzureTenant` 接受 tenant GUID 或完整域名，例如 `contoso.onmicrosoft.com`。省略时使用认证来源当前用户记录中的 tenant；尚未登录时由登录流程确定 tenant。启动和刷新 token 均无需选择或校验 subscription；每次 ARM 请求在路径中指定目标订阅。
+
+登录时 Flint 关闭订阅选择菜单，且不修改用户的全局配置：Azure CLI 只在登录命令执行期间设置 `AZURE_CORE_LOGIN_EXPERIENCE_V2=off`，结束后恢复原环境变量；Azure PowerShell 使用 `Update-AzConfig -LoginExperienceV2 Off -Scope Process`，只作用于当前 Flint 进程。认证来源自身仍可能在后台发现可访问的订阅。
 
 ```powershell
 powershell.exe -NoProfile -File .\agent.ps1 -AzureTenant 'contoso.onmicrosoft.com'
@@ -62,7 +79,7 @@ powershell.exe -NoProfile -File .\agent.ps1 -AzureTenant '<tenant-guid>'
 powershell.exe -NoProfile -File .\agent.ps1 -NoAzure
 ```
 
-缺少 Azure CLI、设备策略阻止 CLI 或用户取消登录时，Azure 工具不可用，文件和 Kubernetes 工具仍可使用。非交互启动只能复用有效登录。`/status` 显示 Azure 状态、账户和 tenant；`-Resume` 启动的新进程重新检查 CLI 登录。
+两种认证来源都未安装、设备策略阻止所选来源或用户取消登录时，Azure 工具不可用，文件和 Kubernetes 工具仍可使用。非交互启动只能复用有效登录。`/status` 显示 Azure 状态、认证来源（`Azure sign-in`）、账户和 tenant；`-Resume` 启动的新进程重新选择认证来源并检查登录。
 
 `azure_request` 访问 Azure 公有云的 `https://management.azure.com`，用于查询或修改资源配置。例如 Key Vault 的位置、SKU、网络和访问策略属于**管理平面**。每个请求显式提供资源路径和 API version，同一 tenant 下访问其他订阅无需切换登录，仍由 Azure RBAC 校验权限。
 
@@ -78,7 +95,7 @@ Key Vault token 使用 audience `https://vault.azure.net`，与 ARM token 分开
 
 `azure_request` 向模型返回 HTTP 状态、`result_id`、`result_path`、文件大小、`content_chars`、`item_count`、`next_link` 和最多 **2,048 个字符的正文预览**。`preview_truncated` 只说明预览不完整；完整正文保留在文件中。History、轨迹和会话快照只记录这些小结果，不自动加入完整文件。
 
-模型需要细节时调用 `read_result(result_id, start_line, start_column, max_lines)`，首次从第 1 行、第 1 列开始，通常读取 200 行。每次最多返回 32,768 个字符；按 `next_line`、`next_column` 继续读取。工具只能读取本 session 的结果 ID，普通文件工具仍不能读取或修改 `.flint`。`-Resume` 可以继续读取同一 session 的文件；文件在退出和 `/clear` 后保留，用户可自行清理。
+模型需要细节时调用 `read_result(result_id, start_line, start_column, max_lines)`，首次从第 1 行、第 1 列开始，通常读取 200 行。每次最多返回 32,768 个字符；按 `next_line`、`next_column` 继续读取。工具只能读取本 session 的结果 ID，普通文件工具仍不能读取或修改 `.flint`。`-Resume` 可以继续读取同一 session 的文件；文件在退出后保留，用户可自行清理。
 
 **文件分页与服务分页分别处理。** `read_result` 翻阅已经保存的单次响应；`next_link` 指向服务的下一页，需要继续调用产生该结果的工具：ARM 使用 `azure_request`，secret 元数据使用 `keyvault_list_secrets`。`item_count` 只统计当前响应根数组或 `value` 数组的条目。ARM 超过 8,192 字符的分页链接保留在正文文件中，不额外放入返回字段；Key Vault 元数据工具拒绝超过此长度的分页链接。
 
@@ -112,11 +129,28 @@ Key Vault token 使用 audience `https://vault.azure.net`，与 ARM token 分开
 
 ## 会话与运行限制
 
-交互界面中，`Flint` 标签为金黄色，正文为亮白色，绿色专用于用户输入，回复中的代码为浅蓝色；恢复的历史对话沿用同一配色。颜色统一在 [lib/Console.ps1](lib/Console.ps1) 中维护。
+交互界面中，`Flint` 标签为金黄色，正文为亮白色，绿色专用于用户输入，回复中的代码为浅蓝色；恢复的历史对话沿用同一配色。颜色统一在 [lib/Console.ps1](lib/Console.ps1) 中维护。在输入提示处直接回车，提示停留在原行；终端不支持 ANSI 时，提示改为在下一行重新显示。
 
-`/help` 查看帮助，`/status` 查看详细状态，`/clear` 清空模型对话，`/exit` 退出。`Ctrl+C` 中止并退出，清理子进程、保存会话并显示 token 用量和继续命令。已经发生的写入会保留；结果不明确时先查询实际状态。
+`/help` 查看帮助，`/status` 查看详细状态，`/continue`（简写 `/c`）继续被中止的任务，`/exit` 退出。需要全新的上下文时，新开一个 Flint 会话。`Ctrl+C` 中止并退出，清理子进程、保存会话并显示 token 用量和继续命令。已经发生的写入会保留；结果不明确时先查询实际状态。
 
-轨迹默认保存在**工作目录**的 `.flint/trajectories/`，记录对话、工具调用、授权、重试和用量。`-TrajectoryDirectory` 可更改位置。`-Resume` 沿用原 session ID，恢复对话与累计用量；`/clear` 保留轨迹、用量和授权。凭据在显示及记录前脱敏，当前 API Key 不写入快照；轨迹写入失败时停止后续动作。
+### 中止与继续
+
+Flint 工作时，进度行显示 `Working (12s · s to stop · Ctrl+C to exit)`。按 `s` 只中止**当前这一轮**，会话保留并回到输入提示；`Ctrl+C` 则中止并退出。
+
+- 读取类工具和模型请求立即中止，并结束对应的子进程树。
+- 正在执行的写操作（文件写入、非只读的 kubectl 命令和 Azure 请求）先执行完，期间进度行显示 `Stopping after the current step`。这样修改的结果是明确的，不会留下状态不明的写入。
+- 同一批中尚未开始的工具调用不再执行，结果记为 `skipped`。
+
+中止后对话保持完整：已完成的工具结果保留，Flint 再追加一条 `developer` 角色的说明，告诉模型这一轮被用户中止、哪些结果已确认、哪些没有。这条说明不会立即发送，而是随下一次请求发给模型，并写入会话检查点。之后可以：
+
+- 直接输入新的指令，改变方向；
+- 输入 `/c`，让模型先核实未确认步骤的实际状态，再接着完成原任务。
+
+`Ctrl+C` 中断的那一轮也会留下类似的说明，所以用 `-Resume` 恢复会话后同样可以用 `/c` 继续。轨迹中，`stop_requested` 记录按下 `s` 的时刻，`turn_stopped` 的 `reason` 区分 `interrupted`（按 `s`）与 `cancelled`（`Ctrl+C`）。
+
+ConstrainedLanguage 不允许脚本读出按的是哪个键，Flint 改用系统自带的 `choice.exe` 读取并消费按键，只有 `s`（不区分大小写）触发中止。工作期间按下的其他键都会被丢弃，字母和数字以外的键还会响一声，所以不能提前输入下一条消息。审批提示、Azure 登录和取 token 期间以及非交互模式下，按 `s` 不起作用。
+
+轨迹默认保存在**工作目录**的 `.flint/trajectories/`，记录对话、工具调用、授权、重试和用量。`-TrajectoryDirectory` 可更改位置。`-Resume` 沿用原 session ID，恢复对话与累计用量。凭据在显示及记录前脱敏，当前 API Key 不写入快照；轨迹写入失败时停止后续动作。
 
 Flint 目录的 `.env`、`.env.*` 和 `.flint/` 已被 Git 忽略，配置模板 `.env.example` 保留在仓库中。从其他仓库目录启动时，也需在该工作目录忽略 `.flint/`。`-TrajectoryDirectory` 只改变轨迹位置，Azure 响应文件始终保存在工作目录的 `.flint/results/`。
 
@@ -133,9 +167,9 @@ Flint 目录的 `.env`、`.env.*` 和 `.flint/` 已被 Git 忽略，配置模板
 
 文件、保存结果读取、Kubernetes 和 Azure HTTP 请求使用独立的 Windows PowerShell 5.1 进程，超时或取消时清理进程树。Azure worker 使用 `Invoke-WebRequest -UseBasicParsing`，固定请求 ARM 主机并禁用重定向。token 仅经启动该 worker 时的临时环境变量传递，worker 立即清除该变量；token 不写入参数、临时请求文件、轨迹或模型上下文。
 
-HTTP 客户端在 worker 内存中缓冲完整响应，Flint 随后脱敏、保存并生成预览；响应落盘控制的是模型上下文大小，HTTP 正文没有 1 MiB 采集限制。CLI 登录和取 token 命令同步执行，等待由 CLI 自身控制；取 token 返回后若工具预算已耗尽，Flint 不发送 HTTP 请求。
+HTTP 客户端在 worker 内存中缓冲完整响应，Flint 随后脱敏、保存并生成预览；响应落盘控制的是模型上下文大小，HTTP 正文没有 1 MiB 采集限制。登录和取 token 同步执行，等待时间由认证来源自身控制；取 token 返回后若工具预算已耗尽，Flint 不发送 HTTP 请求。
 
-模型请求、匹配 Git 只读规则的命令、Azure GET 和已审核的 Resource Graph POST 查询遇到可重试的临时错误时，Flint 按 1、2、4 秒退避，最多重试 3 次。Flint 不自动重试 session 授权的操作和文件写入。Azure HTTP 202 表示已接受请求，需继续查询状态才能确认完成；超时或取消的修改同样需先查询实际状态。达到上下文限制时停止，由用户缩小问题或 `/clear`。
+模型请求、匹配 Git 只读规则的命令、Azure GET 和已审核的 Resource Graph POST 查询遇到可重试的临时错误时，Flint 按 1、2、4 秒退避，最多重试 3 次。Flint 不自动重试 session 授权的操作和文件写入。Azure HTTP 202 表示已接受请求，需继续查询状态才能确认完成；超时或取消的修改同样需先查询实际状态。达到上下文限制时停止，由用户缩小问题后新开一个会话。
 
 ## 验证
 
@@ -149,4 +183,4 @@ powershell.exe -NoProfile -File .\tests\Preview.Ui.ps1
 powershell.exe -NoProfile -File .\tests\Preview.Exit.ps1
 ```
 
-测试在 Windows PowerShell 5.1 的 ConstrainedLanguage 下覆盖入口版本、文件分页与权限、Azure CLI 登录复用、完整响应保存与分页读取、REST 授权、命令执行、重试、取消、退出和会话恢复。Azure 测试使用本地 CLI 启动器和模拟 HTTP 响应；设备自身的执行策略和真实登录行为仍需在目标环境验证。
+测试在 Windows PowerShell 5.1 的 ConstrainedLanguage 下覆盖入口版本、文件分页与权限、Azure 认证来源选择与登录复用、完整响应保存与分页读取、REST 授权、命令执行、重试、取消、按 `s` 中止与继续、退出和会话恢复。Azure 测试使用本地 CLI 启动器、模拟的 `Az.Accounts` 模块和模拟 HTTP 响应；设备自身的执行策略和真实登录行为仍需在目标环境验证。

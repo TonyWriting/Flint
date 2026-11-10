@@ -49,9 +49,6 @@ try {
         Assert-True ($events[$i].elapsed_ms -ge 0) 'Keep elapsed time nonnegative after resume.'
     }
     Assert-True (@(Get-ChildItem -LiteralPath $directory -Filter *.jsonl).Count -eq 1) 'Do not create a new trajectory on resume.'
-    Clear-AgentHistory $resumed
-    $cleared = Read-FlintSession $resumed.Id $directory $WorkRoot
-    Assert-True ($cleared.state.History.Count -eq 0 -and $cleared.state.InputTokens -eq 1243 -and $null -eq $cleared.state.LastInputTokens) 'Persist /clear without resetting cumulative usage.'
     Assert-Throws { Read-FlintSession '..\outside' $directory $WorkRoot } '*32-character session ID*'
     Assert-Throws { Read-FlintSession ('0' * 32) $directory $WorkRoot } '*not found*'
     Assert-Throws { Read-FlintSession $Session.Id $directory $TestRoot } '*original working directory*'

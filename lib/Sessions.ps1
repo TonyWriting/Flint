@@ -70,14 +70,6 @@ function New-AgentSession {
     return $session
 }
 
-function Clear-AgentHistory {
-    param([hashtable]$Session)
-    Write-FlintEvent $Session 'history_cleared' @{ items = $Session.History.Count }
-    $Session.History = @()
-    $Session.LastInputTokens = $null; $Session.LastOutputTokens = $null; $Session.EstimatedTokens = 0
-    Write-FlintCheckpoint $Session
-}
-
 function Add-FlintUsage {
     param([hashtable]$Session, $Usage)
     if ($Usage -and $null -ne $Usage.input_tokens -and $null -ne $Usage.output_tokens) {
@@ -132,7 +124,7 @@ function Read-FlintSession {
         if ($event.session_id -ine $Id -or $event.sequence -ne $sequence) { throw 'The session trajectory is inconsistent. It cannot be resumed safely.' }
         if ($sequence -eq 1) { $started = ([datetime]$event.timestamp).ToUniversalTime().AddMilliseconds(-[long]$event.elapsed_ms) }
         if ($event.event -eq 'session_checkpoint') { $checkpoint = $event.data; $pending = $false }
-        elseif ($event.event -in @('user_input', 'model_request', 'tool_started', 'history_cleared')) { $pending = $true }
+        elseif ($event.event -in @('user_input', 'model_request', 'tool_started')) { $pending = $true }
     }
     if (-not $checkpoint -or $checkpoint.version -ne 1) { throw 'This session has no supported resume checkpoint. Start a new conversation.' }
     if ($pending) { throw 'The last turn has no saved checkpoint. Inspect the trajectory and verify any file changes before starting a new conversation.' }

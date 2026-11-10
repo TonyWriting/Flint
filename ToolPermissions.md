@@ -15,7 +15,7 @@
 
 命令匹配只读规则时自动执行；规则文件损坏或含非只读规则时停止。其他命令先查本 session 授权，没有匹配项就展示完整调用并询问 `y/n`：`y` 保存并执行，`n` 不保存、不执行。无法交互时返回 `approval_required`；等待确认不占执行超时。
 
-**新 session 不继承授权。** `-Resume` 沿用同一 ID 时可复用，`/clear` 保留授权。批准过的写命令可以在本 session 内重复执行，但不会成为只读规则，也不自动重试。
+**新 session 不继承授权。** `-Resume` 沿用同一 ID 时可复用。批准过的写命令可以在本 session 内重复执行，但不会成为只读规则，也不自动重试。
 
 ## 什么是相同命令
 
@@ -64,7 +64,7 @@ Azure 只接受 `https://management.azure.com` 下的 ARM 路径，必须含一�
 
 ## 维护入口
 
-`tools/Registry.ps1` 注册工具并校验参数；`lib/Permissions.ps1` 匹配 Kubernetes 规则并保存授权。Azure 专用代码集中在 `tools/azure/`：`Auth.ps1` 负责 CLI 登录、身份检查和 token 缓存，`Controller.ps1` 负责授权及 worker 调度，`Http.ps1` 校验 ARM 请求并执行 HTTP 调用，`KeyVault.ps1` 校验元数据列表请求并筛选响应字段。`tools/Results.ps1` 负责响应脱敏、落盘和结果 ID 读取。worker 会再次检查请求与获准调用是否一致。
+`tools/Registry.ps1` 注册工具并校验参数；`lib/Permissions.ps1` 匹配 Kubernetes 规则并保存授权。Azure 专用代码集中在 `tools/azure/`：`Auth.ps1` 负责选择 Azure CLI 或 Azure PowerShell 认证来源、登录、身份检查和 token 缓存，`Controller.ps1` 负责授权及 worker 调度，`Http.ps1` 校验 ARM 请求并执行 HTTP 调用，`KeyVault.ps1` 校验元数据列表请求并筛选响应字段。`tools/Results.ps1` 负责响应脱敏、落盘和结果 ID 读取。worker 会再次检查请求与获准调用是否一致。
 
 主进程加载 Azure 的四个模块；worker 只加载 `Http.ps1` 和 `KeyVault.ps1`，登录与授权逻辑由主进程执行。完整目录职责见 [[README#代码布局|代码布局]]。
 

@@ -58,7 +58,8 @@ function Invoke-RestMethod {
     foreach ($path in @($observed.request_path, $observed.response_path, ($observed.response_path + '.error'))) {
         Assert-True (-not (Test-Path -LiteralPath $path)) 'Clean up request, response and error files.'
     }
-    $Session.RequestTimeoutSec = 20
+    # Four worker starts plus 7 seconds of backoff must fit inside the request deadline on slow hosts.
+    $Session.RequestTimeoutSec = 60
     Assert-Throws { Invoke-TestModel 'failure' } '*HTTP 429*Rejected*redacted*'
     Assert-True ([int](Get-Content -LiteralPath (Join-Path $fixture 'failure.count')) -eq 4) 'Carry retryable HTTP status across the worker boundary and stop after four attempts.'
     $response = Invoke-TestModel 'recover'

@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $passed = 0
-foreach ($suite in @('Config', 'Ui', 'Sessions', 'Files', 'Directories', 'Reading', 'Results', 'Agent', 'Permissions', 'Commands', 'Azure', 'AzureApproval', 'AzureCli', 'KeyVault', 'AzureCancellation', 'Retry', 'Model', 'WorkerStartup', 'Process', 'Cancellation', 'ApprovalCancellation', 'ModelCancellation', 'Cli', 'Exit', 'IdleExit', 'CompletedExit', 'RetryCancellation')) {
+foreach ($suite in @('Config', 'Ui', 'Sessions', 'Files', 'Directories', 'Reading', 'Results', 'Agent', 'Permissions', 'Commands', 'Azure', 'AzureApproval', 'AzureCli', 'AzurePowerShell', 'KeyVault', 'AzureCancellation', 'Retry', 'Model', 'WorkerStartup', 'Process', 'Cancellation', 'Stop', 'ApprovalCancellation', 'ModelCancellation', 'Cli', 'Exit', 'IdleExit', 'CompletedExit', 'RetryCancellation')) {
     $arguments = @('-NoProfile', '-NonInteractive', '-File', (Join-Path $PSScriptRoot ($suite + '.Tests.ps1')))
     $ErrorActionPreference = 'Continue'
     $output = & $powerShell @arguments 2>&1

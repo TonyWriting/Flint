@@ -31,6 +31,30 @@ try {
     Show-FlintHelp $Session
     Assert-True ((Get-UiText).Contains('Ctrl+C') -and -not (Get-UiText).Contains('Esc') -and -not (Get-UiText).Contains('Shift+Enter')) 'Advertise only supported input shortcuts.'
 
+    # Blank entries: the console echoes Enter as a newline, so ANSI moves back up and redraws the prompt.
+    $script:Inputs = @('', '   ', 'Next question')
+    function Read-Host {
+        $value = $script:Inputs[0]
+        $script:Inputs = @($script:Inputs | Select-Object -Skip 1)
+        return $value
+    }
+    $escape = [string][char]27
+    $Session.Ui.Live = $true; $Session.Ui.Ansi = $true
+    $script:Writes = @()
+    $prompt = Read-FlintPrompt $Session
+    $redraws = @($script:Writes | Where-Object { $_.text -ceq ($escape + '[1A' + $escape + '[2K' + "`r") }).Count
+    $lines = @($script:Writes | Where-Object { -not $_.inline }).Count
+    Assert-True ($prompt -ceq 'Next question' -and $redraws -eq 2 -and $lines -eq 1) 'Keep the prompt on the same line after blank entries.'
+    $script:Inputs = @('', 'Again')
+    $Session.Ui.Ansi = $false
+    $script:Writes = @()
+    $prompt = Read-FlintPrompt $Session
+    $prompts = @($script:Writes | Where-Object { $_.text -ceq '> ' }).Count
+    Assert-True ($prompt -ceq 'Again' -and $prompts -eq 2 -and @($script:Writes | Where-Object { -not $_.inline }).Count -eq 1 -and -not (Get-UiText).Contains($escape)) 'Without ANSI, reprint the prompt without a spacer line.'
+    $script:Inputs = @('')
+    $Session.Ui.Live = $false
+    Assert-True ((Read-FlintPrompt $Session) -ceq '') 'Return blank redirected input to the caller.'
+
     $Session.Ui.Live = $true; $Session.Ui.Ansi = $false
     Start-FlintTurnUi $Session
     $Session.Ui.Started = [datetime]::UtcNow.AddSeconds(-18.1)
@@ -170,7 +194,7 @@ still ordinary text
     }
     Assert-True ((ConvertTo-Json -InputObject $Session.History -Depth 32 -Compress) -ceq $historyBefore -and $Session.EventSequence -eq $sequenceBefore -and $Session.ModelCalls -eq $callsBefore) 'History display must not change conversation state, usage or the trajectory.'
     $Session.History = @(); $script:Writes = @(); Show-FlintHistory $Session
-    Assert-True ($script:Writes.Count -eq 0) 'Show no stale conversation after /clear.'
+    Assert-True ($script:Writes.Count -eq 0) 'Show nothing for an empty conversation.'
     $Session.ModelCalls = 3; $Session.UsageReports = 2
     $Session.InputTokens = 1234L; $Session.OutputTokens = 56L; $Session.CachedTokens = 1000L; $Session.ReasoningTokens = 20L
     $Session.CachedReported = $true; $Session.ReasoningReported = $true

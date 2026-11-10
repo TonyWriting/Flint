@@ -5,6 +5,7 @@ function Wait-FlintRetry {
     $until = [datetime]::UtcNow.AddSeconds($Seconds)
     while ([datetime]::UtcNow -lt $until) {
         Update-FlintProgress $Session
+        if (Test-FlintStopKey $Session) { return $false }
         Start-Sleep -Milliseconds 100
     }
     return [datetime]::UtcNow -lt $Deadline
@@ -38,7 +39,11 @@ function Invoke-FlintProcess {
         # Accessing Handle keeps ExitCode available after a short-lived child exits.
         $null = $process.Handle
         while (-not $process.HasExited) {
-            if ($Session) { Update-FlintProgress $Session }
+            if ($Session) {
+                Update-FlintProgress $Session
+                # A deferred stop lets an in-flight change finish so its result is not lost.
+                if ((Test-FlintStopKey $Session) -and -not $Session.StopDeferred) { $status = 'stopped'; break }
+            }
             if ((Get-FlintElapsedMs $started) -ge ($TimeoutSec * 1000)) { $status = 'timeout'; break }
             $bytes = 0L
             foreach ($capture in @($stdoutPath, $stderrPath)) {
