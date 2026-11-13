@@ -2,6 +2,7 @@ function Complete-FlintToolResult {
     param([hashtable]$Session, [string]$Name, $Parsed, [string]$CallId, [datetime]$Started, $Result)
     if (-not $Result) { $Result = @{ status = 'cancelled'; exit_code = $null; output = 'Tool interrupted; verify actual state before repeating any write.'; retryable = $false } }
     $result = Protect-FlintValue $Session $Result
+    if ($Name -ceq 'run_command') { $result.falcon_guide_path = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs\Falcon.md' }
     $result.duration_ms = Get-FlintElapsedMs $Started
     Write-FlintEvent $Session 'tool_finished' @{ call_id = $CallId; name = $Name; result = $result } -BestEffort
     if ($result.output.Length -gt 32768) { $result.output = $result.output.Substring(0, 32768) + "`n[truncated at 32768 characters]"; $result.truncated = $true }

@@ -22,7 +22,7 @@ function Read-FlintPermissionRules {
         $fields = @($rule.PSObject.Properties.Name)
         if (@($fields | Where-Object { $_ -cnotin @('command', 'read_only', 'options', 'positionals') }).Count -gt 0 -or
             $rule.read_only -isnot [bool] -or -not $rule.read_only -or $rule.command -isnot [array] -or $rule.command.Count -eq 0 -or $rule.options -isnot [pscustomobject]) { throw 'Fixed permission rules must describe read-only commands.' }
-        foreach ($word in $rule.command) { if ($word -isnot [string] -or $word -cnotmatch '^[a-z0-9][a-z0-9-]*$') { throw 'Invalid rule command.' } }
+        foreach ($word in $rule.command) { if ($word -isnot [string] -or $word -cnotmatch '^[a-z0-9][a-z0-9.-]*$') { throw 'Invalid rule command.' } }
         foreach ($property in $rule.options.PSObject.Properties) {
             $option = $property.Value
             if ($property.Name -cnotmatch '^--?[a-zA-Z][a-zA-Z0-9-]*$' -or $option -isnot [pscustomobject] -or

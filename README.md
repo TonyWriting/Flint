@@ -44,6 +44,18 @@ powershell.exe -NoProfile -File $flint -Resume '<session-id>'
 
 文件工具无需额外模块。Azure 工具先通过 Azure CLI 或 Azure PowerShell 完成认证（见下节），再通过 Windows PowerShell 5.1 原生 HTTP 客户端调用 Azure Resource Manager（ARM，Azure 资源管理接口）。Kubernetes 使用 PATH 中已配置的 `kubectl`。设备需允许脚本、所用的 Azure 认证工具、`kubectl` 及 `taskkill.exe` 运行，并具备对应网络访问权限和 TLS 1.2 及以上支持。
 
+## Falcon 与 kubectl
+
+Falcon 使用现有 `run_command` 工具的 `executor="kubectl"`，工具总数保持 9 个。接入使用 SAW 已配置的 `kubectl.exe`、kubeconfig、kubelogin 和 JIT 权限；Azure ARM 登录与 Kubernetes 访问分别验证。每个集群请求明确指定 `--context`，命名空间资源同时指定 `--namespace`，无需切换全局 context。
+
+`kubectl config get-contexts` 用于发现已有 context，`api-resources` 和 `explain` 用于核对实际 CRD。已审核的 Application、CrossClusterDataDeployment、FleetPod／FleetDeployment／FleetNode、ManifestWork 读取，以及 Pod／Event 查询和指定资源的 `describe`，按 [kubectl.json](tools/permissions/kubectl.json) 自动执行并参与已有的并行调度。标签与字段筛选帮助缩小查询范围；未审核的资源或选项仍需审批。
+
+Control Cluster（CC）管理 Application 和数据部署，Standard Cluster（SC）运行实际 Deployment 和 Pod。Flint 先查 CC，再按当前部署信息定位 SC。`run_command` 返回安装目录内的 `falcon_guide_path`，模型通过 `read_file` 按需读取 [Falcon 操作指南](docs/Falcon.md)；指南路径属于工具结果，system prompt 和工具定义保持固定。
+
+Application／CrossClusterDataDeployment 修改使用明确命名的 `patch`：指定 `--type=json` 和内联 `--patch`，第一项必须测试刚读取的 `/metadata/resourceVersion`，后续只允许操作 `/spec/` 下的字段。审批展示目标、参数和模型提供的变更说明。写入按顺序执行且不自动重试；返回 `verification_required` 提醒继续检查 CC 控制器反馈及相关 SC 的实际状态。交互式 `kubectl edit` 不可用。
+
+非空 kubectl 输出按现有规则脱敏并保存：`result_path` 指向 stdout，stdout 为空时保存 stderr；两者均有内容时另返回 `stderr_result_path`。初始预览最多 2,048 字符，后续使用 `read_file`／`search_text`。`item_count` 统计保存的列表项，`next_continue` 表明服务端列表仍有后续内容。进程输出上限仍为 1 MiB；`capture_incomplete` 表示采集提前结束，保存内容可能不完整，应缩小查询范围。命令退出成功仅表示提交完成，修改后的实际状态需要另行验证。
+
 ## Azure 登录与访问范围
 
 Azure 认证需要一个**认证来源**，它只负责登录和签发 token，ARM 与 Key Vault 请求始终由 Flint 自己的 HTTP 客户端发送。启动时按以下顺序选择：

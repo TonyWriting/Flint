@@ -62,6 +62,7 @@ function Show-FlintToolResult {
         else { Write-Host '    Completion is unconfirmed. Verify the resource state.' -ForegroundColor DarkGray }
     } else {
         $detail = (Protect-FlintText $Session $Result.output) -replace '\s+', ' '
+        if ($Result.stderr) { $detail = $Result.stderr }
         if ($Result.operation_message) { $detail = $Result.operation_message }
         if ($Result.service_error.message) { $detail = $Result.service_error.code + ': ' + $Result.service_error.message }
         $detail = (Protect-FlintText $Session $detail) -replace '\s+', ' '

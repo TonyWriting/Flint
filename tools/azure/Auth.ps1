@@ -232,6 +232,7 @@ function Initialize-FlintAzure {
     if ($Session.Azure.Initialized) { return }
     $Session.Azure = @{ Initialized = $true; Status = 'unavailable'; AccessToken = $null; Account = ''; Tenant = $Session.AzureTenant; Provider = ''; CliPath = ''; ExpiresUtc = $null; Message = ''; LoginAttempted = $false }
     if ($Session.NoAzure) { $Session.Azure.Status = 'disabled'; $Session.Azure.Message = 'Azure tools are disabled by -NoAzure.'; return }
+    Write-Host 'Initializing Azure authentication, please wait...' -ForegroundColor DarkGray
     $failure = $null
     try {
         if ($Session.Azure.Tenant) { Assert-FlintAzureTenant $Session.Azure.Tenant }

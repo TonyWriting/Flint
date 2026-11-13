@@ -28,8 +28,8 @@ function Assert-FlintResultJsonDepth {
     }
 }
 
-function Save-FlintAzureResult {
-    param([hashtable]$Session, [AllowEmptyString()][string]$Content)
+function Save-FlintResult {
+    param([hashtable]$Session, [AllowEmptyString()][string]$Content, [switch]$Kubernetes)
     $directory = Get-FlintResultDirectory $Session.Root $Session.Id
     $id = [guid]::NewGuid().ToString('N')
     $format = 'text'; $extension = '.txt'; $decoded = $null; $itemCount = $null; $nextLink = $null
@@ -65,10 +65,21 @@ function Save-FlintAzureResult {
         $last = [int][char]$text[$previewLength - 1]
         if ($last -ge 55296 -and $last -le 56319) { $previewLength-- }
     }
-    return @{
+    $result = @{
         result_id = $id; result_path = $path; format = $format
         size_bytes = (Get-Item -LiteralPath $path -ErrorAction Stop).Length; content_chars = $text.Length
         item_count = $itemCount; next_link = $nextLink
         output = $text.Substring(0, $previewLength); preview_truncated = ($previewLength -lt $text.Length)
     }
+    if ($Kubernetes -and $format -eq 'json' -and $safe -isnot [array]) {
+        if ($safe.items -is [array]) { $result.item_count = $safe.items.Count }
+        $result.next_continue = $null
+        if ($safe.metadata.continue -is [string]) { $result.next_continue = $safe.metadata.continue }
+    }
+    return $result
+}
+
+function Save-FlintAzureResult {
+    param([hashtable]$Session, [AllowEmptyString()][string]$Content)
+    return Save-FlintResult $Session $Content
 }

@@ -49,7 +49,7 @@ function Get-AgentTools {
     }
     [ordered]@{
         type = 'function'; name = 'run_command'; strict = $true
-        description = 'Run kubectl with literal argument tokens, without a shell. Reviewed reads run automatically; other invocations require exact session approval. Use azure_request for Azure.'
+        description = 'Run kubectl with literal arguments. Supports Kubernetes and Falcon CRDs: query Applications/data deployments in a control cluster, then locate workload pods in standard clusters. Reviewed reads run automatically; other calls require exact session approval. Read the returned falcon_guide_path for Falcon workflows before changes. Changes require explicit --context and --namespace for namespaced resources. Falcon Application/data-deployment patches require --type=json with a leading /metadata/resourceVersion test and changes below /spec/. Read actual state after writes; exit code 0 only confirms the command completed. Nonempty output is saved at result_path with a bounded preview; stderr_result_path holds separate warnings/errors when present. capture_incomplete means capture stopped early: narrow the query. Use read_file/search_text for saved results and azure_request for Azure ARM.'
         parameters = [ordered]@{
             type = 'object'; additionalProperties = $false; required = @('executor', 'arguments', 'purpose')
             properties = [ordered]@{

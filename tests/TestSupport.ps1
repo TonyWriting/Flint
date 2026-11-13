@@ -53,7 +53,7 @@ function New-TestRuntime {
     $source = Split-Path $PSScriptRoot -Parent
     New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
     foreach ($file in @('agent.ps1', '.env.example')) { Copy-Item -LiteralPath (Join-Path $source $file) -Destination $Path }
-    foreach ($directory in @('lib', 'tools')) { Copy-Item -LiteralPath (Join-Path $source $directory) -Destination $Path -Recurse }
+    foreach ($directory in @('lib', 'tools', 'docs')) { Copy-Item -LiteralPath (Join-Path $source $directory) -Destination $Path -Recurse }
     foreach ($worker in @('lib\ModelWorker.ps1', 'tools\Worker.ps1')) {
         $entry = Join-Path $Path $worker
         $implementation = $entry -replace '\.ps1$', '.Implementation.ps1'

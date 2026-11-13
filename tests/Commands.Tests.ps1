@@ -25,6 +25,11 @@ class Recorder {
         if (args.Length > 0 && args[0] == "empty") return 0;
         if (args.Length > 0 && args[0] == "sleep") Thread.Sleep(30000);
         if (args.Length > 0 && args[0] == "large") { Console.Write(new string('x', 1100000)); return 0; }
+        if (args.Length > 1 && args[0] == "get" && args[1] == "applications") {
+            Console.Write("{\"kind\":\"ApplicationList\",\"metadata\":{\"continue\":\"next-page\"},\"items\":[{\"name\":\"first\",\"padding\":\"" + new string('x', 600000) + "\"},{\"name\":\"last-falcon-record\",\"password\":\"private-falcon-value\"}]}");
+            Console.Error.Write("Fixture warning on stderr.");
+            return 0;
+        }
         Console.Write("[" + string.Join(",", Array.ConvertAll(args, Quote)) + "]");
         return 0;
     }
@@ -48,6 +53,22 @@ class Recorder {
     $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('fail') }
     Assert-True ($result.status -eq 'error' -and $result.exit_code -eq 7 -and $result.output.Contains('partial') -and $result.output.Contains('failure')) 'Keep native exit codes and both output streams.'
     Assert-True ((Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('empty') }).output -ceq '') 'Allow empty successful command output.'
+    $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'applications', '--context', 'cc-test', '--namespace', 'team', '--output', 'json') }
+    Assert-True ($result.status -eq 'ok' -and $result.preview_truncated -and $result.output.Length -le 2048 -and -not $result.capture_incomplete) 'Save command output beyond the worker result limit before returning a bounded preview.'
+    $saved = Get-Content -LiteralPath $result.result_path -Raw -Encoding UTF8
+    $data = ConvertFrom-Json -InputObject $saved
+    Assert-True ($data.items.Count -eq 2 -and $data.items[0].padding.Length -eq 600000 -and $data.items[1].name -ceq 'last-falcon-record') 'Preserve the complete Kubernetes JSON without mixing stderr into it.'
+    Assert-True ($result.item_count -eq 2 -and $result.next_continue -ceq 'next-page') 'Expose Kubernetes list counts and continuation separately from previews.'
+    Assert-True (-not $saved.Contains('private-falcon-value') -and $data.items[1].password -ceq '[redacted]') 'Apply the existing redaction before persisting command results.'
+    Assert-True ((Get-Content -LiteralPath $result.stderr_result_path -Raw).Contains('Fixture warning')) 'Preserve diagnostic stderr separately.'
+    $search = Invoke-TestTool search_text @{ path = $result.result_path; keyword = 'last-falcon-record' }
+    Assert-True ($search.status -eq 'ok' -and $search.matches_returned -eq 1) 'Search the saved command response past the preview boundary.'
+    Assert-True (Test-Path -LiteralPath $result.falcon_guide_path) 'Return the installed Falcon guide location independently of the working directory.'
+    $patch = '[{"op":"test","path":"/metadata/resourceVersion","value":"15"},{"op":"replace","path":"/spec/workload/0/manifest/spec/replicas","value":6}]'
+    $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('patch', 'applications', 'demo', '--context', 'cc-test', '--namespace', 'team', '--type=json', '--patch', $patch) }
+    Assert-True ($result.status -eq 'ok' -and $result.verification_required -and -not $result.outcome_unknown) 'Require state verification after a successful scoped mutation.'
+    $actual = ConvertFrom-Json -InputObject $result.output
+    Assert-True ($actual[-1] -ceq $patch) 'Pass the reviewed JSON patch to the native process without shell interpolation.'
     $Session.ToolTimeoutSec = 2
     Assert-True ((Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('sleep') }).status -eq 'timeout') 'Bound the entire worker and native process tree.'
     $Session.ToolTimeoutSec = 30
