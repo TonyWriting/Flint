@@ -71,6 +71,8 @@ Azure CLI 由 Flint 直接调用，需支持 token 输出中的 `expires_on` 字
 
 登录时 Flint 关闭订阅选择菜单，且不修改用户的全局配置：Azure CLI 只在登录命令执行期间设置 `AZURE_CORE_LOGIN_EXPERIENCE_V2=off`，结束后恢复原环境变量；Azure PowerShell 使用 `Update-AzConfig -LoginExperienceV2 Off -Scope Process`，只作用于当前 Flint 进程。认证来源自身仍可能在后台发现可访问的订阅。
 
+Flint 调用 Azure CLI 时临时设置 `AZURE_CORE_NO_COLOR=true`，避免 SAW 版 CLI 的终端颜色初始化导入不可用的 `ctypes` 模块。身份读取、取 token 和登录均使用该设置，成功或失败后恢复原环境变量；不修改 Azure CLI 全局配置，也不影响 Flint 自身的终端配色。
+
 ```powershell
 powershell.exe -NoProfile -File .\agent.ps1 -AzureTenant 'contoso.onmicrosoft.com'
 powershell.exe -NoProfile -File .\agent.ps1 -AzureTenant '<tenant-guid>'

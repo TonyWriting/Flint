@@ -6,6 +6,10 @@ try {
     $launcher = Join-Path $TestRoot 'az.cmd'
     Set-Content -LiteralPath $launcher -Encoding ASCII -Value @'
 @echo off
+if not "%AZURE_CORE_NO_COLOR%"=="true" (
+  echo ModuleNotFoundError: No module named 'ctypes' 1>&2
+  exit /b 90
+)
 if defined AZURE_OPENAI_API_KEY exit /b 91
 if defined FLINT_MODEL_API_KEY exit /b 92
 if defined FLINT_AZURE_ACCESS_TOKEN exit /b 93
@@ -36,9 +40,12 @@ exit /b 1
         Set-Item -LiteralPath ('Env:' + $name) -Value 'must-not-reach-cli'
     }
     $savedEnvironment.AZURE_CORE_LOGIN_EXPERIENCE_V2 = (Get-Item -LiteralPath Env:AZURE_CORE_LOGIN_EXPERIENCE_V2 -ErrorAction SilentlyContinue).Value
+    $savedEnvironment.AZURE_CORE_NO_COLOR = (Get-Item -LiteralPath Env:AZURE_CORE_NO_COLOR -ErrorAction SilentlyContinue).Value
     $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'on'
+    $env:AZURE_CORE_NO_COLOR = 'false'
     $account = Invoke-FlintAzureCli $Session account
     Assert-True ($account.user.name -eq 'user@example.com') 'Read the CLI user identity without selecting a subscription.'
+    Assert-True ($env:AZURE_CORE_NO_COLOR -ceq 'false') 'Disable CLI colors only during invocation and restore the caller setting.'
     $token = Invoke-FlintAzureCli $Session token
     Assert-True ($token.accessToken -ceq 'private-cli-fixture-token' -and $token.expires_on -eq 4102444800) 'Capture CLI token JSON directly into memory.'
     Assert-True ($token.resource -ceq 'https://management.azure.com/') 'Request the ARM audience by default.'
@@ -46,12 +53,18 @@ exit /b 1
     Assert-True ($keyVaultToken.resource -ceq 'https://vault.azure.net') 'Request the Key Vault audience separately using the same tenant login.'
     Invoke-FlintAzureCli $Session login
     Assert-True ($env:AZURE_CORE_LOGIN_EXPERIENCE_V2 -ceq 'on') 'Restore the subscription-selector setting after tenant login.'
+    Assert-True ($env:AZURE_CORE_NO_COLOR -ceq 'false') 'Restore color preferences after a successful login.'
     $failedLauncher = Join-Path $TestRoot 'failed-az.cmd'
-    Set-Content -LiteralPath $failedLauncher -Encoding ASCII -Value @('@echo off', 'echo ERROR: Please run az login. 1>&2', 'exit /b 1')
+    Set-Content -LiteralPath $failedLauncher -Encoding ASCII -Value @('@echo off', 'if not "%AZURE_CORE_NO_COLOR%"=="true" exit /b 90', 'echo ERROR: Please run az login. 1>&2', 'exit /b 1')
     $Session.Azure.CliPath = $failedLauncher
     Assert-Throws { Invoke-FlintAzureCli $Session token } '*az login*'
     Assert-Throws { Invoke-FlintAzureCli $Session login } '*az login failed*'
     Assert-True ($env:AZURE_CORE_LOGIN_EXPERIENCE_V2 -ceq 'on') 'Restore login settings after a failed login as well.'
+    Assert-True ($env:AZURE_CORE_NO_COLOR -ceq 'false') 'Restore color preferences after CLI errors.'
+    $Session.Azure.CliPath = $launcher
+    Remove-Item -LiteralPath Env:AZURE_CORE_NO_COLOR -ErrorAction SilentlyContinue
+    $null = Invoke-FlintAzureCli $Session account
+    Assert-True (-not (Test-Path -LiteralPath Env:AZURE_CORE_NO_COLOR)) 'Keep an initially absent color variable absent after invocation.'
     foreach ($name in @('AZURE_OPENAI_API_KEY', 'FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')) {
         Assert-True ((Get-Item -LiteralPath ('Env:' + $name)).Value -ceq 'must-not-reach-cli') 'Restore parent environment values after native invocation.'
     }

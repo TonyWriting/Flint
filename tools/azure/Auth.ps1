@@ -95,6 +95,9 @@ function Invoke-FlintAzureCli {
     $previousEnvironment = @{}
     try {
         Hide-FlintAzureSecretEnvironment $previousEnvironment
+        # SAW builds can omit ctypes, which Knack imports when initializing legacy-console colors.
+        $previousEnvironment.AZURE_CORE_NO_COLOR = (Get-Item -LiteralPath Env:AZURE_CORE_NO_COLOR -ErrorAction SilentlyContinue).Value
+        $env:AZURE_CORE_NO_COLOR = 'true'
         if ($Operation -eq 'login') {
             $previousEnvironment.AZURE_CORE_LOGIN_EXPERIENCE_V2 = (Get-Item -LiteralPath Env:AZURE_CORE_LOGIN_EXPERIENCE_V2 -ErrorAction SilentlyContinue).Value
             $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'
