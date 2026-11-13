@@ -17,7 +17,7 @@ function Invoke-AgentTurn {
     $reason = 'cancelled'
     $detail = ''
     $calls = @(); $completed = @{}
-    $toolCount = 0; $modelCount = 0
+    $progress = @{ tool_count = 0 }; $modelCount = 0
     $Session.StopRequested = $false; $Session.StopDeferred = $false
     Start-FlintTurnUi $Session
     try {
@@ -54,19 +54,31 @@ function Invoke-AgentTurn {
                 $reason = 'completed'
                 return Protect-FlintText $Session $answer
             }
-            foreach ($call in $calls) {
+            for ($callIndex = 0; $callIndex -lt $calls.Count; $callIndex++) {
+                $call = $calls[$callIndex]
                 if (Test-FlintStopKey $Session) { throw 'Stopped by the user.' }
-                if ($toolCount -ge $Session.MaxToolCalls) {
+                if ($progress.tool_count -ge $Session.MaxToolCalls) {
                     $result = @{ status = 'skipped'; exit_code = $null; output = 'Tool-call limit reached. No action was taken.' }
                     Write-FlintEvent $Session 'tool_skipped' @{ call_id = $call.call_id; name = $call.name; result = $result }
                 } else {
-                    $toolCount++
+                    $batch = @()
+                    if ($Session.MaxParallelTools -gt 1) {
+                        for ($candidate = $callIndex; $candidate -lt $calls.Count -and $batch.Count -lt $Session.MaxParallelTools -and ($progress.tool_count + $batch.Count) -lt $Session.MaxToolCalls; $candidate++) {
+                            if (-not (Get-FlintParallelCall $Session $calls[$candidate])) { break }
+                            $batch += $calls[$candidate]
+                        }
+                    }
+                    if ($batch.Count -gt 1) {
+                        Invoke-FlintParallelTools $Session $batch $completed $progress
+                        $callIndex += $batch.Count - 1
+                        continue
+                    }
+                    $progress.tool_count++
                     $result = Invoke-AgentTool $Session $call.name $call.arguments $call.call_id
                 }
-                $Session.History += @{ type = 'function_call_output'; call_id = $call.call_id; output = (ConvertTo-Json -InputObject $result -Depth 16 -Compress) }
-                $completed[$call.call_id] = $true
+                Add-FlintToolOutput $Session $call.call_id $result $completed
             }
-            if ($toolCount -ge $Session.MaxToolCalls) { $reason = 'tool_limit'; throw 'Tool-call limit reached. Results are retained; send /c to continue, or narrow the request.' }
+            if ($progress.tool_count -ge $Session.MaxToolCalls) { $reason = 'tool_limit'; throw 'Tool-call limit reached. Results are retained; send /c to continue, or narrow the request.' }
         }
         $reason = 'model_limit'
         throw "Stopped after $TurnLimit model calls. Tool results are retained; send /c or another message to continue."
@@ -81,9 +93,9 @@ function Invoke-AgentTurn {
         foreach ($call in $calls) {
             if (-not $completed.ContainsKey($call.call_id)) {
                 $result = @{ status = 'interrupted'; exit_code = $null; output = 'No confirmed tool result. Verify the actual state before repeating any write.' }
-                # A user stop only interrupts between calls, so unfinished calls never started.
+                # The parallel finalizer pairs started reads; remaining calls never started on a user stop.
                 if ($reason -eq 'interrupted') { $result = @{ status = 'skipped'; exit_code = $null; output = 'Not run: the user stopped the turn before this call started.' } }
-                $Session.History += @{ type = 'function_call_output'; call_id = $call.call_id; output = (ConvertTo-Json -InputObject $result -Depth 16 -Compress) }
+                Add-FlintToolOutput $Session $call.call_id $result $completed
                 Write-FlintEvent $Session 'tool_interrupted' @{ call_id = $call.call_id; result = $result } -BestEffort
             }
         }
@@ -92,7 +104,7 @@ function Invoke-AgentTurn {
         Write-FlintCheckpoint $Session -BestEffort
         Write-FlintEvent $Session 'turn_stopped' @{
             reason = $reason; message = $detail; duration_ms = Get-FlintElapsedMs $started
-            model_calls = $modelCount; tool_calls = $toolCount
+            model_calls = $modelCount; tool_calls = $progress.tool_count
             total_input_tokens = $Session.InputTokens; total_output_tokens = $Session.OutputTokens; total_cached_tokens = $Session.CachedTokens
             total_reasoning_tokens = $Session.ReasoningTokens
         } -BestEffort

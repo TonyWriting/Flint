@@ -6,6 +6,7 @@
         reasoning = [ordered]@{ effort = $Session.Effort }
         include = @('reasoning.encrypted_content'); store = $false; stream = $false
         max_output_tokens = $Session.MaxOutputTokens
+        parallel_tool_calls = $true
         input = @($Session.History)
     }
     $payload = Protect-FlintValue $Session $payload
@@ -43,7 +44,7 @@ function Get-FlintHttpFailure {
         ($status -eq 0 -and $transport -in @('ConnectFailure', 'ConnectionClosed', 'SendFailure', 'ReceiveFailure'))
     $detail = $Record.Exception.Message
     if ($Record.ErrorDetails.Message) { $detail += ' ' + $Record.ErrorDetails.Message }
-    return @{ http_status = $status; retryable = $retryable; message = Protect-FlintText $Session $detail }
+    return @{ http_status = $status; retryable = $retryable; message = Protect-FlintText $Session $detail; failure = Get-FlintFailureDetails $Session $Record }
 }
 
 function Invoke-AgentResponse {
@@ -105,7 +106,7 @@ function Invoke-AgentResponse {
             if (-not $failure) { $failure = Get-FlintHttpFailure $Session $_ }
             Write-FlintEvent $Session 'model_error' @{
                 model_call = $Session.ModelCalls; attempt = $attempt + 1; duration_ms = Get-FlintElapsedMs $started
-                http_status = $failure.http_status; message = $failure.message
+                http_status = $failure.http_status; message = $failure.message; failure = $failure.failure
             } -BestEffort
         } finally {
             foreach ($path in @($responsePath, $requestPath, $errorPath)) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }

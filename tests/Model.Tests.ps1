@@ -19,7 +19,7 @@ try {
     $fixture = Join-Path $TestRoot 'model worker'
     New-Item -ItemType Directory -Path $fixture | Out-Null
     $source = Join-Path (Split-Path $PSScriptRoot -Parent) 'lib'
-    foreach ($file in @('ModelWorker.ps1', 'Client.ps1', 'Security.ps1')) { Copy-Item -LiteralPath (Join-Path $source $file) -Destination $fixture }
+    foreach ($file in @('ModelWorker.ps1', 'Client.ps1', 'Security.ps1', 'Telemetry.ps1')) { Copy-Item -LiteralPath (Join-Path $source $file) -Destination $fixture }
     # Keep the actual worker and HTTP transport; replace only the remote service boundary.
     Add-Content -LiteralPath (Join-Path $fixture 'Client.ps1') -Encoding UTF8 -Value @'
 function Invoke-RestMethod {

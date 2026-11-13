@@ -19,10 +19,18 @@ function Assert-Throws {
 function Invoke-TestTool {
     param([string]$Name, [hashtable]$ToolArguments)
     if ($Name -in @('run_command', 'azure_request') -and -not $ToolArguments.ContainsKey('purpose')) { $ToolArguments.purpose = 'Execute the scoped offline test operation.' }
-    if ($Name -in @('read_file', 'read_result')) {
+    if ($Name -eq 'read_file') {
         foreach ($entry in @(@{ key = 'start_line'; value = 1 }, @{ key = 'start_column'; value = 1 }, @{ key = 'max_lines'; value = 200 })) {
             if (-not $ToolArguments.ContainsKey($entry.key)) { $ToolArguments[$entry.key] = $entry.value }
         }
+    }
+    if ($Name -eq 'list_files') {
+        if (-not $ToolArguments.ContainsKey('name_filter')) { $ToolArguments.name_filter = '*' }
+        if (-not $ToolArguments.ContainsKey('offset')) { $ToolArguments.offset = 0 }
+    }
+    if ($Name -eq 'search_text') {
+        if (-not $ToolArguments.ContainsKey('start_line')) { $ToolArguments.start_line = 1 }
+        if (-not $ToolArguments.ContainsKey('max_matches')) { $ToolArguments.max_matches = 50 }
     }
     Invoke-AgentTool $script:Session $Name (ConvertTo-Json -InputObject $ToolArguments -Depth 16 -Compress) 'test-call'
 }

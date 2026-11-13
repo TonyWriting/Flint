@@ -60,7 +60,7 @@ try {
     Assert-True ((Get-Content -LiteralPath (Join-Path $WorkRoot 'report.md') -Raw) -ceq "# Report`n`nDone.") 'Create the complete model-requested file.'
     $stableTools = ConvertTo-Json -InputObject $Requests[0].payload.tools -Depth 16 -Compress
     foreach ($request in $Requests) {
-        Assert-True ($request.payload.tools.Count -eq 9 -and 'read_result' -in $request.payload.tools.name -and 'keyvault_list_secrets' -in $request.payload.tools.name -and 'azure_request' -in $request.payload.tools.name) 'Expose saved-result reading, Azure requests and Key Vault metadata listing.'
+        Assert-True ($request.payload.tools.Count -eq 9 -and 'search_text' -in $request.payload.tools.name -and 'read_result' -notin $request.payload.tools.name -and 'keyvault_list_secrets' -in $request.payload.tools.name -and 'azure_request' -in $request.payload.tools.name) 'Use one file reader alongside text search, Azure requests and Key Vault metadata listing.'
         Assert-True ((ConvertTo-Json -InputObject $request.payload.tools -Depth 16 -Compress) -ceq $stableTools) 'Keep tool definitions stable across requests.'
         Assert-True ($request.payload.instructions -ceq $Requests[0].payload.instructions) 'Keep the instruction prefix stable.'
         Assert-True (-not $request.payload.stream -and -not $request.payload.store -and $request.payload.max_output_tokens -eq 4096) 'Bound output and use stateless requests.'

@@ -17,6 +17,9 @@ function Invoke-WebRequest {
     if ($Headers.Authorization -cne 'Bearer private-worker-token' -or -not $UseBasicParsing -or $MaximumRedirection -ne 0) { throw 'Incorrect Azure worker transport.' }
     if ((Test-Path Env:FLINT_AZURE_ACCESS_TOKEN) -or (Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:AZURE_OPENAI_API_KEY)) { throw 'Worker authentication remains in its environment.' }
     if ($Uri -like '*fixture=transport-failure') { throw 'Fixture connection failed.' }
+    if ($Uri -like '*fixture=accepted') {
+        return @{ StatusCode = 202; Content = ''; Headers = @{ 'Azure-AsyncOperation' = 'https://management.azure.com/providers/Microsoft.Test/operations/123?api-version=2026-01-01'; 'Retry-After' = '5'; 'x-ms-request-id' = 'worker-request-id' } }
+    }
     if ($Uri -like '*fixture=forbidden' -or $Uri -like '*fixture=unauthorized') {
         $statusCode = 403
         if ($Uri -like '*fixture=unauthorized') { $statusCode = 401 }
@@ -78,6 +81,7 @@ Set-Content -LiteralPath ($RequestPath + '.mode') -Value ([string]$ExecutionCont
     }
     foreach ($case in @(
         @{ name = 'success'; status = 'ok'; http_status = 200 },
+        @{ name = 'accepted'; status = 'pending'; http_status = 202 },
         @{ name = 'forbidden'; status = 'error'; http_status = 403 },
         @{ name = 'transport-failure'; status = 'error'; http_status = $null },
         @{ name = 'unauthorized'; status = 'authentication_required'; http_status = 401 }
@@ -91,8 +95,14 @@ Set-Content -LiteralPath ($RequestPath + '.mode') -Value ([string]$ExecutionCont
             Assert-True ($result.result_id -and (Test-Path -LiteralPath $result.result_path)) 'Keep the saved response reference after worker deserialization.'
         } else { Assert-True ($result.output -like '*Fixture connection failed*') 'Keep the transport error instead of replacing it with a result-processing error.' }
         if ($case.name -eq 'success') {
-            $saved = Invoke-TestTool read_result @{ result_id = $result.result_id }
+            $saved = Invoke-TestTool read_file @{ path = $result.result_path }
             Assert-True ($saved.status -eq 'ok' -and $saved.duration_ms -gt 0 -and $saved.output.Contains('vault')) 'Also replace an existing worker timing property when reading the saved result.'
+        }
+        if ($case.name -eq 'accepted') {
+            Assert-True ($result.poll_path -eq '/providers/Microsoft.Test/operations/123?api-version=2026-01-01' -and $result.poll_kind -eq 'status' -and $result.request_id -eq 'worker-request-id' -and $result.poll_after_utc) 'Preserve operation metadata across the real worker boundary.'
+        }
+        if ($case.name -eq 'transport-failure') {
+            Assert-True ($result.failure.message.Contains('Fixture connection failed') -and $result.failure.error_id -and $result.failure.script_stack_trace) 'Preserve worker exception diagnostics across serialization.'
         }
     }
     Assert-True ($Session.Azure.Status -eq 'authentication_required') 'Propagate HTTP 401 into the parent authentication state.'

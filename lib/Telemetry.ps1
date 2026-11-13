@@ -1,3 +1,19 @@
+function Get-FlintFailureDetails {
+    param([hashtable]$Session, $Record)
+    # Read properties only: exception reflection is unavailable in ConstrainedLanguage.
+    $details = @{
+        message = [string]$Record.Exception.Message
+        error_id = [string]$Record.FullyQualifiedErrorId
+        exception_type = [string]$Record.Exception.PSObject.TypeNames[0]
+        category = [string]$Record.CategoryInfo.Category
+        script_stack_trace = [string]$Record.ScriptStackTrace
+    }
+    foreach ($name in @($details.Keys)) {
+        if ($details[$name].Length -gt 4096) { $details[$name] = $details[$name].Substring(0, 4096) + ' [truncated]' }
+    }
+    return Protect-FlintValue $Session $details
+}
+
 function Write-FlintEvent {
     param([hashtable]$Session, [string]$Type, $Data, [switch]$BestEffort)
     if (-not $Session -or -not $Session.TrajectoryPath) { return }

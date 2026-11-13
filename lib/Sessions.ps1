@@ -4,7 +4,7 @@ function New-AgentSession {
         [int]$RequestTimeoutSec = 180, [int]$ToolTimeoutSec = 30,
         [int]$MaxToolCalls = 40, [int]$MaxOutputTokens = 4096,
         [int]$ContextWindow = 0, [string]$TrajectoryDirectory, [string]$Resume,
-        [string]$AzureTenant, [switch]$NoAzure
+        [string]$AzureTenant, [switch]$NoAzure, [ValidateRange(1, 8)][int]$MaxParallelTools = 4
     )
     $root = Get-Item -LiteralPath (Get-Location).Path -Force -ErrorAction Stop
     if (-not $root.PSIsContainer -or $root.PSProvider.Name -ne 'FileSystem') { throw 'The current PowerShell location must be a filesystem directory.' }
@@ -44,7 +44,7 @@ function New-AgentSession {
         PermissionSessionDirectory = Join-Path (Split-Path $PSScriptRoot -Parent) '.flint\permissions'
         RequestTimeoutSec = $RequestTimeoutSec; ToolTimeoutSec = $ToolTimeoutSec
         TurnLimit = 20
-        MaxToolCalls = $MaxToolCalls; MaxOutputTokens = $MaxOutputTokens
+        MaxToolCalls = $MaxToolCalls; MaxParallelTools = $MaxParallelTools; MaxOutputTokens = $MaxOutputTokens
         ContextWindow = $ContextWindow; MaxRequestChars = 500000
         ModelCalls = 0; LastInputTokens = $null; LastOutputTokens = $null
         InputTokens = 0L; OutputTokens = 0L; CachedTokens = 0L
@@ -62,7 +62,7 @@ function New-AgentSession {
     Write-FlintEvent $session $startEvent @{
         root = $session.Root; model = $session.Model; language_mode = [string]$ExecutionContext.SessionState.LanguageMode
         powershell_version = [string]$PSVersionTable.PSVersion; request_timeout_sec = $RequestTimeoutSec
-        tool_timeout_sec = $ToolTimeoutSec; max_tool_calls = $MaxToolCalls
+        tool_timeout_sec = $ToolTimeoutSec; max_tool_calls = $MaxToolCalls; max_parallel_tools = $MaxParallelTools
         context_window = $ContextWindow; max_output_tokens = $MaxOutputTokens
         resumed_from = $Resume
     }

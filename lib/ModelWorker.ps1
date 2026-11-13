@@ -6,6 +6,7 @@ Remove-Item -LiteralPath Env:FLINT_MODEL_API_KEY -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath Env:AZURE_OPENAI_API_KEY -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath Env:FLINT_AZURE_ACCESS_TOKEN -ErrorAction SilentlyContinue
 . (Join-Path $PSScriptRoot 'Security.ps1')
+. (Join-Path $PSScriptRoot 'Telemetry.ps1')
 . (Join-Path $PSScriptRoot 'Client.ps1')
 $request = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
 $session = @{ ApiKey = $apiKey; ApiEndpoint = $request.endpoint; RequestTimeoutSec = $request.timeout_sec }

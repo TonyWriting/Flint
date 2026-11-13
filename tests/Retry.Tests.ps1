@@ -79,6 +79,8 @@ try {
     Assert-True ($Session.ModelCalls -eq 3 -and $Session.UsageReports -eq 2 -and $Session.InputTokens -eq 20 -and $Session.OutputTokens -eq 10) 'Count HTTP attempts while adding each reported usage exactly once.'
     $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
     Assert-True (@($events | Where-Object { $_.event -eq 'model_retry' }).Count -gt 0 -and -not (Get-Content -LiteralPath $Session.TrajectoryPath -Raw -Encoding UTF8).Contains('test-api-key')) 'Record retries without credentials.'
+    $modelFailure = @($events | Where-Object { $_.event -eq 'model_error' })[0].data.failure
+    Assert-True ($modelFailure.error_id -and $modelFailure.exception_type -and $modelFailure.script_stack_trace -and -not $modelFailure.message.Contains('test-api-key')) 'Record model exception context through the existing redaction path.'
     # Restore the real wait to verify it also works under ConstrainedLanguage.
     . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Runtime.ps1')
     $started = [datetime]::UtcNow

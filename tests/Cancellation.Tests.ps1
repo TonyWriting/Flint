@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-param([ValidateSet('Tool', 'Model', 'Approval', 'Azure')][string]$During = 'Tool')
+param([ValidateSet('Tool', 'Model', 'Approval', 'Azure', 'Parallel')][string]$During = 'Tool')
 $ErrorActionPreference = 'Stop'
 # The test driver owns a runspace; the harness inside it runs in ConstrainedLanguage.
 $testParent = (Resolve-Path -LiteralPath $env:TEMP).ProviderPath.TrimEnd('\')
@@ -10,7 +10,9 @@ $childPath = Join-Path $testRoot 'child.ps1'
 $pidPath = Join-Path $testRoot 'pid.txt'
 Set-Content -LiteralPath $childPath -Encoding ASCII -Value @(
     'param($RequestPath)'
+    '$ExecutionContext.SessionState.LanguageMode = ''ConstrainedLanguage'''
     'if ($RequestPath) { Set-Content -LiteralPath (Join-Path $PSScriptRoot ''request-path.txt'') -Value $RequestPath }'
+    'if ($RequestPath) { $request = ConvertFrom-Json (Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8); if ($request.arguments.path -like ''parallel-*'') { Set-Content -LiteralPath (Join-Path $PSScriptRoot ($request.arguments.path + ''.pid'')) -Value $PID; Set-Content -LiteralPath (Join-Path $PSScriptRoot ($request.arguments.path + ''.request'')) -Value $RequestPath } }'
     ("Set-Content -LiteralPath '" + $pidPath.Replace("'", "''") + "' -Value `$PID; Start-Sleep -Seconds 60")
 )
 Set-Content -LiteralPath (Join-Path $testRoot '.env') -Encoding ASCII -Value @(
@@ -27,8 +29,9 @@ if ($ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage') { $Ex
 . $AgentPath
 Set-Location -LiteralPath $TestRoot
 $script:TestRoot = $TestRoot
-$session = New-AgentSession -EnvFile (Join-Path $TestRoot '.env')
+$session = New-AgentSession -EnvFile (Join-Path $TestRoot '.env') -MaxParallelTools 1
 $session.PermissionSessionDirectory = Join-Path $TestRoot 'permissions'
+if ($During -eq 'Parallel') { $session.MaxParallelTools = 2; $session.WorkerPath = Join-Path $TestRoot 'child.ps1' }
 if ($During -eq 'Azure') {
     $session.Azure = @{ Status = 'ready'; Account = 'user@example.com'; Tenant = 'tenant'; AccessToken = 'private-test-token'; ExpiresUtc = [datetime]::UtcNow.AddHours(1) }
 }
@@ -50,6 +53,11 @@ if ($During -eq 'Model') {
 } else {
 function Invoke-AgentResponse {
     param($Session, $Payload)
+    if ($During -eq 'Parallel') {
+        return @{ status = 'completed'; output = @(foreach ($name in @('parallel-a.txt', 'parallel-b.txt', 'parallel-never.txt')) {
+            @{ type = 'function_call'; call_id = $name; name = 'read_file'; arguments = (ConvertTo-Json @{ path = $name; start_line = 1; start_column = 1; max_lines = 200 } -Compress) }
+        }) }
+    }
     if ($During -eq 'Azure') {
         return @{ status = 'completed'; output = @(
             @{ type = 'function_call'; call_id = 'call_1'; name = 'azure_request'; arguments = '{"method":"GET","path":"/subscriptions?api-version=2022-12-01","body":"","purpose":"List subscriptions for the cancellation fixture."}' },
@@ -84,13 +92,27 @@ finally {
     $null = $driver.AddScript($scriptText).AddArgument($agentPath).AddArgument($testRoot).AddArgument($During)
     $pending = $driver.BeginInvoke()
     $deadline = (Get-Date).AddSeconds(15)
-    while (-not (Test-Path -LiteralPath $pidPath) -and (Get-Date) -lt $deadline -and -not $pending.IsCompleted) { Start-Sleep -Milliseconds 100 }
-    if (-not (Test-Path -LiteralPath $pidPath)) { throw ('The cancellation fixture did not start: ' + [string]$driver.Streams.Error) }
+    $ready = $false
+    while ((Get-Date) -lt $deadline -and -not $pending.IsCompleted) {
+        $ready = Test-Path -LiteralPath $pidPath
+        if ($During -eq 'Parallel') { $ready = @(Get-ChildItem -LiteralPath $testRoot -Filter 'parallel-*.pid').Count -eq 2 }
+        if ($ready) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    if (-not $ready) { throw ('The cancellation fixture did not start: ' + [string]$driver.Streams.Error) }
     $driver.Stop()
     try { $null = $driver.EndInvoke($pending) } catch { }
     if ($During -eq 'Approval') {
         if (Test-Path -LiteralPath (Join-Path $testRoot 'executed.txt')) { throw 'Cancelled approval executed a command.' }
         if (Test-Path -LiteralPath (Join-Path $testRoot 'permissions')) { throw 'Cancelled approval saved authorization.' }
+    } elseif ($During -eq 'Parallel') {
+        foreach ($marker in @(Get-ChildItem -LiteralPath $testRoot -Filter 'parallel-*.pid')) {
+            $childId = [int](Get-Content -LiteralPath $marker.FullName)
+            if (Get-Process -Id $childId -ErrorAction SilentlyContinue) { throw 'Cancellation left a parallel worker running.' }
+            $requestPath = Get-Content -LiteralPath ($marker.FullName -replace '\.pid$', '.request')
+            if ((Test-Path -LiteralPath $requestPath) -or (Test-Path -LiteralPath ($requestPath + '.result'))) { throw 'Cancellation left a parallel worker request or result file.' }
+        }
+        if (Test-Path -LiteralPath (Join-Path $testRoot 'parallel-never.txt.pid')) { throw 'Cancellation started a queued group.' }
     } else {
         $childId = [int](Get-Content -LiteralPath $pidPath)
         if (Get-Process -Id $childId -ErrorAction SilentlyContinue) { throw 'Cancellation left a child process running.' }
@@ -98,6 +120,7 @@ finally {
     $history = ConvertFrom-Json -InputObject (Get-Content -LiteralPath (Join-Path $testRoot 'history.json') -Raw -Encoding UTF8)
     $outputs = @($history | Where-Object { $_.type -eq 'function_call_output' })
     if ($During -in @('Tool', 'Approval', 'Azure') -and $outputs.Count -ne 2) { throw 'Cancellation left unmatched tool calls.' }
+    if ($During -eq 'Parallel' -and ($outputs.Count -ne 3 -or @($outputs.call_id | Select-Object -Unique).Count -ne 3)) { throw 'Parallel cancellation left missing or duplicate tool outputs.' }
     if ($During -eq 'Model') {
         $requestPath = Get-Content -LiteralPath (Join-Path $testRoot 'request-path.txt')
         $responsePath = $requestPath.Substring(0, $requestPath.Length - '.request'.Length)

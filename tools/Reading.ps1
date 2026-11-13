@@ -47,7 +47,7 @@ function Read-FlintTextFile {
         if ($null -eq $content) { $content = '' }
         if ($content.Contains([string][char]0)) { throw 'Binary files are not supported.' }
         if ($content.Length -gt 0) {
-            foreach ($line in ($content -split '(?<=\n)')) {
+            foreach ($line in ($content -split '(?<=\n)|(?<=\r)(?!\n)')) {
                 if ($line.Length -eq 0) { continue }
                 if (Add-FlintReadLine $state $line) { break }
             }

@@ -77,6 +77,8 @@ try {
     Reset-AzureFixture
     $script:CliFailure = "OSError: 'run_module' is disabled by policy"
     Initialize-FlintAzure $Session
+    $initialization = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ } | Where-Object { $_.event -eq 'azure_initialized' })[-1]
+    Assert-True ($initialization.data.message.Contains('disabled by policy') -and $initialization.data.failure.message.Contains('disabled by policy') -and $initialization.data.failure.error_id -and $initialization.data.failure.exception_type -and $initialization.data.failure.script_stack_trace) 'Persist the initialization failure reason and its exception context.'
     Assert-True ($Session.Azure.Status -eq 'unavailable' -and $LoginCalls -eq 0 -and $Session.Azure.Message.Contains('run_module')) 'Report CLI execution policy errors.'
 
     Reset-AzureFixture
@@ -195,6 +197,7 @@ try {
     $Session.Azure.Status = 'ready'; $Session.Azure.ExpiresUtc = [datetime]::UtcNow; $script:TokenFailure = 'Run az login to refresh authentication.'
     $result = Invoke-TestTool azure_request $read
     Assert-True ($result.status -eq 'authentication_required' -and $LoginCalls -eq 0) 'Require restart after CLI refresh fails.'
+    Assert-True ($result.failure.message.Contains('Run az login') -and $result.failure.error_id) 'Keep the underlying refresh failure alongside the user-facing restart instruction.'
 
     $Session.Azure.Status = 'ready'; $script:TokenFailure = ''; $script:HttpStatus = 200
     $script:ResponseBody = '{"data":"' + ('x' * 40000) + '","tail":"saved-body-tail-marker"}'

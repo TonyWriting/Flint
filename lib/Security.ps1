@@ -57,7 +57,7 @@ function Protect-FlintValue {
 }
 
 function Assert-FlintFilePathText {
-    param([string]$Path)
+    param([string]$Path, [switch]$AllowProtectedNames)
     if ([string]::IsNullOrWhiteSpace($Path) -or $Path.Length -gt 240) { throw 'Provide a literal local path of at most 240 characters.' }
     $partsPath = $Path
     if ($Path -match '^[A-Za-z]:[\\/]') { $partsPath = $Path.Substring(3) }
@@ -66,8 +66,8 @@ function Assert-FlintFilePathText {
     foreach ($part in ($partsPath -split '[\\/]')) {
         if ($part -in @('', '.', '..')) { continue }
         if ($part -match '[ .]$|^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)') { throw 'Unsupported Windows path.' }
-        if ($part -match '^(?i:\.env(?:\..*)?|\.git|\.flint|\.ssh|\.kube|\.azure|credentials(?:\..*)?|id_rsa|id_ed25519)$' -or
-            $part -match '\.(?i:pem|pfx|p12|key)$') { throw 'Credential files and internal directories are protected.' }
+        if (-not $AllowProtectedNames -and ($part -match '^(?i:\.env(?:\..*)?|\.git|\.flint|\.ssh|\.kube|\.azure|credentials(?:\..*)?|id_rsa|id_ed25519)$' -or
+            $part -match '\.(?i:pem|pfx|p12|key)$')) { throw 'Credential files and internal directories are protected.' }
     }
 }
 
@@ -78,9 +78,9 @@ function Test-FlintPathWithinDirectory {
 }
 
 function Resolve-AgentPath {
-    param([string]$Root, [string]$Path, [string[]]$ProtectedPaths = @())
+    param([string]$Root, [string]$Path, [string[]]$ProtectedPaths = @(), [string[]]$ReadDirectories = @())
     if ([string]::IsNullOrWhiteSpace($Root)) { throw 'The working directory is required.' }
-    Assert-FlintFilePathText $Path
+    Assert-FlintFilePathText $Path -AllowProtectedNames:($ReadDirectories.Count -gt 0)
     $candidate = $Path.Replace('/', '\')
     if ($Path -notmatch '^[A-Za-z]:[\\/]') { $candidate = Join-Path $Root $candidate }
     if (Test-Path -LiteralPath $candidate) {
@@ -91,10 +91,17 @@ function Resolve-AgentPath {
         $parent = (Resolve-Path -LiteralPath $parentPath -ErrorAction Stop).ProviderPath
         $resolved = Join-Path $parent (Split-Path $candidate -Leaf)
     }
-    Assert-FlintFilePathText $resolved
-    foreach ($protected in $ProtectedPaths) {
-        if (Test-FlintPathWithinDirectory $resolved $protected) {
-            throw 'This path is protected for the requested operation.'
+    $allowedRead = $false
+    foreach ($directory in $ReadDirectories) {
+        if (Test-FlintPathWithinDirectory $resolved $directory) { $allowedRead = $true; break }
+    }
+    Assert-FlintFilePathText $resolved -AllowProtectedNames:$allowedRead
+    if (-not $allowedRead) {
+        Assert-FlintFilePathText $Path
+        foreach ($protected in $ProtectedPaths) {
+            if (Test-FlintPathWithinDirectory $resolved $protected) {
+                throw 'This path is protected for the requested operation.'
+            }
         }
     }
     $current = $resolved

@@ -1,3 +1,14 @@
+function Complete-FlintToolResult {
+    param([hashtable]$Session, [string]$Name, $Parsed, [string]$CallId, [datetime]$Started, $Result)
+    if (-not $Result) { $Result = @{ status = 'cancelled'; exit_code = $null; output = 'Tool interrupted; verify actual state before repeating any write.'; retryable = $false } }
+    $result = Protect-FlintValue $Session $Result
+    $result.duration_ms = Get-FlintElapsedMs $Started
+    Write-FlintEvent $Session 'tool_finished' @{ call_id = $CallId; name = $Name; result = $result } -BestEffort
+    if ($result.output.Length -gt 32768) { $result.output = $result.output.Substring(0, 32768) + "`n[truncated at 32768 characters]"; $result.truncated = $true }
+    Show-FlintToolResult $Session $Name $Parsed $result
+    return $result
+}
+
 function Invoke-AgentTool {
     param([hashtable]$Session, [string]$Name, [string]$Arguments, [string]$CallId)
     $started = [datetime]::UtcNow
@@ -36,7 +47,7 @@ function Invoke-AgentTool {
         # Human approval time is outside the execution timeout.
         $deadline = ([datetime]::UtcNow).AddSeconds($Session.ToolTimeoutSec)
         # Reads stop at once; a change runs to completion so its outcome stays known.
-        $Session.StopDeferred = -not ($permission.read_only -or $Name -cin @('list_files', 'read_file', 'read_result'))
+        $Session.StopDeferred = -not ($permission.read_only -or $Name -cin @('list_files', 'read_file', 'search_text'))
         for ($attempt = 0; $permission.allowed -and $attempt -le 3; $attempt++) {
             $remaining = ($deadline - [datetime]::UtcNow).TotalSeconds
             if ($remaining -le 0) {
@@ -54,31 +65,28 @@ function Invoke-AgentTool {
             # A session approval never classifies an unknown command as read-only.
             if (-not $permission.read_only -or $result.status -ne 'error' -or -not $result.retryable -or $attempt -eq 3) { break }
             $delay = @(1, 2, 4)[$attempt]
+            if ($null -ne $result.retry_after_seconds -and $result.retry_after_seconds -gt $delay) { $delay = $result.retry_after_seconds }
             if (($deadline - [datetime]::UtcNow).TotalSeconds -le $delay) { break }
             Write-FlintEvent $Session 'tool_retry' @{ call_id = $CallId; attempt = $attempt + 2; delay_seconds = $delay; result = $result }
             if (-not (Wait-FlintRetry $Session $delay $deadline ('Retrying command ({0}/3) in {1}s' -f ($attempt + 1), $delay))) { break }
         }
     } catch {
         if ($Session.LogFailed) { throw }
-        $result = @{ status = 'error'; exit_code = $null; output = $_.Exception.Message; retryable = $false }
+        $result = @{ status = 'error'; exit_code = $null; output = $_.Exception.Message; retryable = $false; failure = Get-FlintFailureDetails $Session $_ }
     } finally {
         $Session.StopDeferred = $false
-        if (-not $result) { $result = @{ status = 'cancelled'; exit_code = $null; output = 'Tool interrupted; verify actual state before repeating any write.'; retryable = $false } }
-        $result = Protect-FlintValue $Session $result
-        $result.duration_ms = Get-FlintElapsedMs $started
-        Write-FlintEvent $Session 'tool_finished' @{ call_id = $CallId; name = $Name; result = $result } -BestEffort
-        if ($result.output.Length -gt 32768) { $result.output = $result.output.Substring(0, 32768) + "`n[truncated at 32768 characters]"; $result.truncated = $true }
-        Show-FlintToolResult $Session $Name $parsed $result
+        $result = Complete-FlintToolResult $Session $Name $parsed $CallId $started $result
     }
     if ($Session.LogFailed) { throw 'Trajectory write failed after the tool. Stopping.' }
     return $result
 }
 
-function Invoke-FlintWorker {
+function New-FlintWorkerRequest {
     param([hashtable]$Session, [string]$Name, $ToolArguments, [double]$TimeoutSec = 0, $CommandInvocation, [string]$WriteDirectory, [string]$AzureAccessToken)
     if ($TimeoutSec -le 0) { $TimeoutSec = $Session.ToolTimeoutSec }
     $requestPath = Join-Path $env:TEMP ('flint-tool-' + [guid]::NewGuid().ToString('N') + '.json')
     $resultPath = $requestPath + '.result'
+    $ready = $false
     try {
         $request = @{
             root = $Session.Root; session_id = $Session.Id; name = $Name; arguments = $ToolArguments; protected_paths = $Session.ProtectedPaths
@@ -94,22 +102,66 @@ function Invoke-FlintWorker {
         $workerArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', ('"' + $Session.WorkerPath + '"'), '-RequestPath', ('"' + $requestPath + '"'))
         $authentication = @{}
         if ($Name -cin @('azure_request', 'keyvault_list_secrets')) { $authentication.AzureAccessToken = $AzureAccessToken }
-        $native = Invoke-FlintProcess -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
-            -ArgumentList $workerArguments -TimeoutSec $TimeoutSec -WorkingDirectory $Session.Root -Session $Session @authentication
-        if ($native.status -eq 'stopped') {
-            return @{ status = 'stopped'; exit_code = $null; output = 'Stopped by the user before the tool finished. No result is available.'; retryable = $false; duration_ms = $native.duration_ms }
+        $nativeArguments = @{
+            FilePath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            ArgumentList = $workerArguments; TimeoutSec = $TimeoutSec; WorkingDirectory = $Session.Root; Session = $Session
         }
-        if ($native.status -ne 'ok') {
-            $detail = 'Tool worker stopped: ' + $native.status + '. ' + $native.stderr
-            if ($Name -in @('write_file', 'edit_file', 'create_directory', 'run_command', 'azure_request')) { $detail += ' The action outcome may be unknown. Query the actual state before proposing another write.' }
-            return @{ status = $native.status; exit_code = $native.exit_code; output = $detail; retryable = $false; duration_ms = $native.duration_ms }
-        }
-        if (-not (Test-Path -LiteralPath $resultPath)) { throw 'Tool worker did not return a result.' }
-        if ((Get-Item -LiteralPath $resultPath).Length -gt 524288) { throw 'Tool result exceeded its size limit.' }
-        $result = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
-        $result | Add-Member -NotePropertyName duration_ms -NotePropertyValue $native.duration_ms -Force
-        return $result
+        foreach ($parameterName in $authentication.Keys) { $nativeArguments[$parameterName] = $authentication[$parameterName] }
+        $ready = $true
+        return @{ request_path = $requestPath; result_path = $resultPath; native_arguments = $nativeArguments; process = $null; name = $Name }
     } finally {
-        foreach ($path in @($requestPath, $resultPath)) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+        if (-not $ready) { foreach ($path in @($requestPath, $resultPath)) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } }
     }
+}
+
+function Remove-FlintWorkerRequest {
+    param([hashtable]$Worker)
+    foreach ($path in @($Worker.request_path, $Worker.result_path)) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+    $Worker.native_arguments = $null
+}
+
+function Read-FlintWorkerResult {
+    param([hashtable]$Worker, $Native)
+    if ($Native.status -eq 'stopped') {
+        return @{ status = 'stopped'; exit_code = $null; output = 'Stopped by the user before the tool finished. No result is available.'; retryable = $false; duration_ms = $Native.duration_ms }
+    }
+    if ($Native.status -ne 'ok') {
+        $detail = 'Tool worker stopped: ' + $Native.status + '. ' + $Native.stderr
+        if ($Worker.name -in @('write_file', 'edit_file', 'create_directory', 'run_command', 'azure_request')) { $detail += ' The action outcome may be unknown. Query the actual state before proposing another write.' }
+        return @{ status = $Native.status; exit_code = $Native.exit_code; output = $detail; retryable = $false; duration_ms = $Native.duration_ms }
+    }
+    if (-not (Test-Path -LiteralPath $Worker.result_path)) { throw 'Tool worker did not return a result.' }
+    if ((Get-Item -LiteralPath $Worker.result_path).Length -gt 524288) { throw 'Tool result exceeded its size limit.' }
+    $result = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $Worker.result_path -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
+    $result | Add-Member -NotePropertyName duration_ms -NotePropertyValue $Native.duration_ms -Force
+    return $result
+}
+
+function Invoke-FlintWorker {
+    param([hashtable]$Session, [string]$Name, $ToolArguments, [double]$TimeoutSec = 0, $CommandInvocation, [string]$WriteDirectory, [string]$AzureAccessToken)
+    $worker = $null
+    try {
+        $worker = New-FlintWorkerRequest @PSBoundParameters
+        $nativeArguments = $worker.native_arguments
+        $native = Invoke-FlintProcess @nativeArguments
+        return Read-FlintWorkerResult $worker $native
+    } finally { if ($worker) { Remove-FlintWorkerRequest $worker } }
+}
+
+function Start-FlintWorker {
+    param([hashtable]$Session, [string]$Name, $ToolArguments, [double]$TimeoutSec, $CommandInvocation, [string]$AzureAccessToken)
+    $worker = $null; $ready = $false
+    try {
+        $worker = New-FlintWorkerRequest @PSBoundParameters
+        $nativeArguments = $worker.native_arguments
+        $worker.process = Start-FlintProcess @nativeArguments
+        $ready = $true
+        return $worker
+    } finally { if ($worker -and -not $ready) { Remove-FlintWorkerRequest $worker } }
+}
+
+function Complete-FlintWorker {
+    param([hashtable]$Worker)
+    try { return Read-FlintWorkerResult $Worker (Complete-FlintProcess $Worker.process) }
+    finally { Remove-FlintWorkerRequest $Worker }
 }

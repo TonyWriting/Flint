@@ -1,5 +1,6 @@
 #Requires -Version 5.1
 . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+$Session.MaxParallelTools = 1
 
 function New-TestResponse {
     param([object[]]$Items)

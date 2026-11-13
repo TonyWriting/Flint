@@ -17,6 +17,7 @@ function Show-FlintSession {
         ('Azure: ' + $Session.Azure.Status), ('Azure sign-in: ' + $signIn), ('Azure account: ' + $Session.Azure.Account), ('Azure tenant: ' + $Session.Azure.Tenant),
         ('Context window: ' + $limit), ('Last API input tokens: ' + $lastInput),
         ('Estimated request tokens: ' + $Session.EstimatedTokens), ('Model calls: ' + $Session.ModelCalls),
+        ('Tool concurrency: ' + $Session.MaxParallelTools),
         ('Session tokens: in {0}, out {1}, cached {2}' -f $Session.InputTokens, $Session.OutputTokens, $Session.CachedTokens),
         ('Trajectory: ' + $Session.TrajectoryPath)
     )) { Write-FlintColoredText (Protect-FlintText $Session $line) $Session }
@@ -36,8 +37,8 @@ function Get-FlintToolLabel {
     param([string]$Name, $ToolArguments, [switch]$Completed)
     switch ($Name) {
         'read_file' { if ($Completed) { return 'Read ' + $ToolArguments.path }; return 'Reading file' }
-        'read_result' { if ($Completed) { return 'Read saved Azure response ' + $ToolArguments.result_id }; return 'Reading saved Azure response' }
         'list_files' { if ($Completed) { return 'Listed files in ' + $ToolArguments.path }; return 'Listing files' }
+        'search_text' { if ($Completed) { return 'Searched ' + $ToolArguments.path }; return 'Searching text' }
         'write_file' { if ($Completed) { return 'Wrote ' + $ToolArguments.path }; return 'Writing file' }
         'edit_file' { if ($Completed) { return 'Edited ' + $ToolArguments.path }; return 'Editing file' }
         'create_directory' { if ($Completed) { return 'Directory ready: ' + $ToolArguments.path }; return 'Creating directory' }
@@ -55,8 +56,15 @@ function Show-FlintToolResult {
         $label = Get-FlintToolLabel $Name $ToolArguments -Completed
         if ($Result.truncated) { $label += ' (output truncated)' }
         Write-Host (Protect-FlintText $Session ('  ' + [char]0x2022 + ' ' + $label)) -ForegroundColor DarkGray
+    } elseif ($Result.status -eq 'pending') {
+        Write-Host (Protect-FlintText $Session ('  Azure operation pending: ' + $Result.operation_status)) -ForegroundColor Yellow
+        if ($Result.poll_after_utc) { Write-Host ('    Next status check: ' + $Result.poll_after_utc) -ForegroundColor DarkGray }
+        else { Write-Host '    Completion is unconfirmed. Verify the resource state.' -ForegroundColor DarkGray }
     } else {
         $detail = (Protect-FlintText $Session $Result.output) -replace '\s+', ' '
+        if ($Result.operation_message) { $detail = $Result.operation_message }
+        if ($Result.service_error.message) { $detail = $Result.service_error.code + ': ' + $Result.service_error.message }
+        $detail = (Protect-FlintText $Session $detail) -replace '\s+', ' '
         if ($detail.Length -gt 240) { $detail = $detail.Substring(0, 237) + '...' }
         $label = $Name + ': ' + $Result.status
         if ($null -ne $Result.http_status) { $label += ' (HTTP ' + $Result.http_status + ')' }
@@ -143,6 +151,7 @@ function Show-FlintExit {
         @{ Name = 'ContextWindow'; Value = $Session.ContextWindow; Default = 0 },
         @{ Name = 'MaxOutputTokens'; Value = $Session.MaxOutputTokens; Default = 4096 },
         @{ Name = 'MaxToolCalls'; Value = $Session.MaxToolCalls; Default = 40 },
+        @{ Name = 'MaxParallelTools'; Value = $Session.MaxParallelTools; Default = 4 },
         @{ Name = 'RequestTimeoutSec'; Value = $Session.RequestTimeoutSec; Default = 180 },
         @{ Name = 'ToolTimeoutSec'; Value = $Session.ToolTimeoutSec; Default = 30 }
     )) { if ($null -ne $option.Value -and $option.Value -ne $option.Default) { $command += ' -' + $option.Name + ' ' + $option.Value } }

@@ -9,6 +9,7 @@ param(
     [ValidateRange(1, 300)][int]$RequestTimeoutSec = 180,
     [ValidateRange(1, 300)][int]$ToolTimeoutSec = 30,
     [ValidateRange(1, 200)][int]$MaxToolCalls = 40,
+    [ValidateRange(1, 8)][int]$MaxParallelTools = 4,
     [ValidateRange(256, 32768)][int]$MaxOutputTokens = 4096,
     [ValidateRange(0, 2000000)][int]$ContextWindow = 0,
     [string]$TrajectoryDirectory,
@@ -26,10 +27,11 @@ if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
 . (Join-Path $PSScriptRoot 'tools\Files.ps1')
 . (Join-Path $PSScriptRoot 'tools\Reading.ps1')
 . (Join-Path $PSScriptRoot 'tools\Results.ps1')
+. (Join-Path $PSScriptRoot 'tools\Searching.ps1')
 foreach ($component in @('Http', 'KeyVault', 'Auth', 'Controller')) {
     . (Join-Path $PSScriptRoot ('tools\azure\' + $component + '.ps1'))
 }
-foreach ($component in @('Security', 'Telemetry', 'Config', 'Sessions', 'Markdown', 'Console', 'Ui', 'Runtime', 'Permissions', 'Tools', 'Client', 'Loop')) {
+foreach ($component in @('Security', 'Telemetry', 'Config', 'Sessions', 'Markdown', 'Console', 'Ui', 'Runtime', 'Permissions', 'Tools', 'Parallel', 'Client', 'Loop')) {
     . (Join-Path $PSScriptRoot ('lib\' + $component + '.ps1'))
 }
 
@@ -40,7 +42,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     try {
         $session = New-AgentSession -EnvFile $EnvFile -Resume $Resume -Effort $ReasoningEffort `
             -RequestTimeoutSec $RequestTimeoutSec -ToolTimeoutSec $ToolTimeoutSec `
-            -MaxToolCalls $MaxToolCalls -MaxOutputTokens $MaxOutputTokens `
+            -MaxToolCalls $MaxToolCalls -MaxParallelTools $MaxParallelTools -MaxOutputTokens $MaxOutputTokens `
             -ContextWindow $ContextWindow -TrajectoryDirectory $TrajectoryDirectory `
             -AzureTenant $AzureTenant -NoAzure:$NoAzure
         $session.TurnLimit = $MaxTurns

@@ -60,7 +60,7 @@ function Invoke-WebRequest {
     $second = Invoke-TestTool keyvault_list_secrets @{ vault_name = 'metadata-vault'; next_link = $first.next_link }
     Assert-True ($second.status -eq 'ok' -and -not $second.has_more -and $second.names[0] -ceq 'gamma' -and ($first.page_count + $second.page_count) -eq 3) 'Follow the list continuation to obtain all three secret names.'
     Assert-True ($null -eq $second.total_count -and $TokenServices.Count -eq 1) 'A final continuation page is not the whole listing, and reuses the service token.'
-    $saved = Invoke-TestTool read_result @{ result_id = $first.result_id }
+    $saved = Invoke-TestTool read_file @{ path = $first.result_path }
     $metadata = ConvertFrom-Json -InputObject $saved.output
     Assert-True ($saved.status -eq 'ok' -and $metadata.value[0].enabled -eq $true -and $metadata.value[1].enabled -eq $false) 'Read allowed metadata from the saved result.'
     Assert-True (@($metadata.value[0].PSObject.Properties.Name | Where-Object { $_ -in @('value', 'tags', 'exp') }).Count -eq 0) 'Discard content fields, free-form tags and invalid metadata types before persistence.'

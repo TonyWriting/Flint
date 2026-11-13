@@ -1,6 +1,6 @@
 # Flint
 
-轻量 Windows Agent，用于查询 Azure／Kubernetes 配置、查看本地文件和执行获准的修改。仅支持 **Windows PowerShell 5.1**，入口拒绝其他版本，允许 5.1 的系统补丁版本。支持 ConstrainedLanguage，语言模式由设备策略决定。
+轻量 Windows Agent，用于查询 Azure／Kubernetes 配置、查看本地文件和执行获准的修改。**仅支持 Windows PowerShell 5.1**，入口拒绝其他版本，允许 5.1 的系统补丁版本。**入口不检查或强制设置语言模式**，语言模式由运行环境和设备策略决定。代码实现、工具执行和验证以 ConstrainedLanguage 下可用的能力为基准，确保能在受限环境运行；FullLanguage 环境也不会被入口拒绝。
 
 项目目录：`Q:\src\Flint`。
 
@@ -61,7 +61,7 @@ Azure 认证需要一个**认证来源**，它只负责登录和签发 token，A
 | 登录 | `az login --tenant <tenant> --allow-no-subscriptions` | `Connect-AzAccount -Tenant <tenant>` |
 | 登录状态保存在 | Azure CLI 的标准缓存 | Azure PowerShell 的标准 context 缓存 |
 
-Azure CLI 由 Flint 直接调用，需支持 token 输出中的 `expires_on` 字段。`Az.Accounts` 在 Flint 主进程中导入一次，`Get-AzAccessToken` 需支持 `-TenantId` 和 `-ResourceUrl`；模块支持 `-AsSecureString` 时以 SecureString 取得 token，只在内存中转换。在 ConstrainedLanguage 设备上，`Az.Accounts` 需被设备策略信任，例如 WDAC 允许 Microsoft 签名代码，或 AppLocker 允许模块所在目录（`Install-Module Az.Accounts -Scope AllUsers` 安装到 Program Files）；否则导入失败，Flint 报告 `could not be loaded`。
+Azure CLI 由 Flint 直接调用，需支持 token 输出中的 `expires_on` 字段。`Az.Accounts` 在 Flint 主进程中导入一次，`Get-AzAccessToken` 需支持 `-TenantId` 和 `-ResourceUrl`；模块支持 `-AsSecureString` 时以 SecureString 取得 token，只在内存中转换。目标设备上的 `Az.Accounts` 必须被设备策略信任，例如 WDAC 允许 Microsoft 签名代码，或 AppLocker 允许模块所在目录（`Install-Module Az.Accounts -Scope AllUsers` 安装到 Program Files）；否则导入失败，Flint 报告 `could not be loaded`。
 
 登录成功后，启动界面显示 `Signed in to Azure as <account> (tenant <tenant>, via Azure CLI)`，末尾标明认证来源。
 
@@ -95,19 +95,29 @@ Key Vault token 使用 audience `https://vault.azure.net`，与 ARM token 分开
 
 `azure_request` 向模型返回 HTTP 状态、`result_id`、`result_path`、文件大小、`content_chars`、`item_count`、`next_link` 和最多 **2,048 个字符的正文预览**。`preview_truncated` 只说明预览不完整；完整正文保留在文件中。History、轨迹和会话快照只记录这些小结果，不自动加入完整文件。
 
-模型需要细节时调用 `read_result(result_id, start_line, start_column, max_lines)`，首次从第 1 行、第 1 列开始，通常读取 200 行。每次最多返回 32,768 个字符；按 `next_line`、`next_column` 继续读取。工具只能读取本 session 的结果 ID，普通文件工具仍不能读取或修改 `.flint`。`-Resume` 可以继续读取同一 session 的文件；文件在退出后保留，用户可自行清理。
+模型需要细节时调用 `read_file(path, start_line, start_column, max_lines)`，将返回的 `result_path` 作为 `path`。普通文件和保存的 HTTP 响应使用同一读取工具，首次从第 1 行、第 1 列开始，通常读取 200 行。每次最多返回 32,768 个字符；按 `next_line`、`next_column` 继续读取。当前 session 的结果目录自动允许读取和搜索，`-Resume` 后可以继续访问；文件在退出后保留，用户可自行清理。仓库外其他 session 的结果和轨迹目录继续受保护；Flint 仓库内所有文件的读取授权仍适用。文件工具禁止改写 `.flint`。
 
-**文件分页与服务分页分别处理。** `read_result` 翻阅已经保存的单次响应；`next_link` 指向服务的下一页，需要继续调用产生该结果的工具：ARM 使用 `azure_request`，secret 元数据使用 `keyvault_list_secrets`。`item_count` 只统计当前响应根数组或 `value` 数组的条目。ARM 超过 8,192 字符的分页链接保留在正文文件中，不额外放入返回字段；Key Vault 元数据工具拒绝超过此长度的分页链接。
+**文件分页与服务分页分别处理。** `read_file` 翻阅已经保存的单次响应；`next_link` 指向服务的下一页，需要继续调用产生该结果的工具：ARM 使用 `azure_request`，secret 元数据使用 `keyvault_list_secrets`。`item_count` 只统计当前响应根数组或 `value` 数组的条目。ARM 超过 8,192 字符的分页链接保留在正文文件中，不额外放入返回字段；Key Vault 元数据工具拒绝超过此长度的分页链接。
 
-读取保存结果不会重新发起 Azure 请求。响应文件写入失败时，工具保留已收到的 HTTP 状态并报告错误，Flint 不因此重复请求。编写解析脚本或自动化代码统一使用 **Windows PowerShell 5.1**，并兼容 ConstrainedLanguage；当前工具提供文件分页读取，通用脚本执行不在工具范围内。
+读取保存结果不会重新发起 Azure 请求。响应文件写入失败时，工具保留已收到的 HTTP 状态并报告错误，Flint 不因此重复请求。编写解析脚本或自动化代码统一使用 **Windows PowerShell 5.1**，所用能力须在 ConstrainedLanguage 下可用；当前工具提供文件分页读取，通用脚本执行不在工具范围内。
+
+### Azure 异步修改
+
+Azure 可能先接受修改，再在后台执行。HTTP 202，以及仍在创建或更新中的资源响应，返回 `status: pending`；`operation_status` 表示服务报告的执行状态，完成前不能报告修改成功。
+
+工具保留 `Azure-AsyncOperation`、`Operation-Location`、`Location` 和 `Retry-After` 响应头，并返回经过校验的 `poll_path`。模型通过现有 `azure_request` 发送 GET 查询该路径，请求体为空。优先使用 `Azure-AsyncOperation`，其次为 `Operation-Location`，202 响应还可使用 `Location`；PUT／PATCH 可按资源的 `properties.provisioningState` 查询进度。轮询地址沿用 HTTPS ARM 主机、允许的路径和显式 `api-version` 限制；不符合限制时保留“处理中”，提示查询实际资源状态。
+
+`poll_after_utc` 是下次允许查询的时间，由 `Retry-After` 的秒数或 HTTP 日期计算；服务未提供有效等待时间时默认等待 5 秒。执行层在 GET 前等待，等待可中止并计入工具超时。等待超过本次工具预算时不发送请求，返回“处理中”，用户稍后可用 `/c` 继续。每次状态查询计入工具调用次数，原始修改不会因轮询而重复执行。
+
+状态接口返回 `Succeeded` 才确认完成；`Failed`、`Canceled` 或 `Cancelled` 即使随 HTTP 200 返回，也报告错误。`Location` 接口以最终 HTTP 成功响应确认完成。状态接口缺少执行状态时报告结果未知。操作路径和等待时间保存在对话结果中，`-Resume` 后可继续查询；确认完成后还需读取目标资源核实修改。
 
 ## 工具与授权
 
 | 工具 | 参数与用途 |
 |---|---|
-| `list_files` | `path`：列出一层目录，最多 200 项。 |
-| `read_file` | `path`、`start_line`、`start_column`、`max_lines`：分页读取文本。 |
-| `read_result` | `result_id`、`start_line`、`start_column`、`max_lines`：分页读取本 session 已保存的 Azure 响应。 |
+| `list_files` | `path`、`name_filter`、`offset`：按名称过滤和排序，分页列出一层目录，每页最多 200 项。 |
+| `read_file` | `path`、`start_line`、`start_column`、`max_lines`：分页读取文本；保存的 Azure 响应使用返回的 `result_path`。 |
+| `search_text` | `path`、`keyword`、`start_line`、`max_matches`：在普通文件或保存的响应中搜索关键词并返回命中位置。 |
 | `write_file` | `path`、`content`：用完整内容新建或覆盖文件。 |
 | `edit_file` | `path`、`old_str`、`new_str`：替换唯一匹配的非空文本，新旧文本须不同。 |
 | `create_directory` | `path`：创建目录，已存在时成功返回；父目录必须存在。 |
@@ -119,15 +129,43 @@ Key Vault token 使用 audience `https://vault.azure.net`，与 ARM token 分开
 
 `run_command` 和 `azure_request` 每次调用都必须由模型提供 `purpose`：使用用户语言、单行、1～1,000 个字符，说明目标、想查询或修改的内容及预期影响；影响不明确时说明不确定性。审批界面先显示标为 `Purpose (model-provided)` 的说明，再显示完整命令或 HTTP 请求。只读分类由执行层规则决定，说明文字不授予权限，也不改变实际调用的授权匹配。
 
+## 文件查找与关键词搜索
+
+先用 `list_files` 找到文件：`name_filter` 为 `*` 时列出所有名称，也可使用 `*.log` 等不区分大小写的文件名通配符，长度为 1～255 个字符，不包含目录分隔符。从 `offset=0` 开始，`truncated` 为 true 时使用返回的 `next_offset` 继续，保持目录和过滤条件一致。目录按名称排序，每页最多 200 项，名称较长时会提前分页以保持输出完整。分页期间目录发生变化，偏移位置也可能变化。
+
+随后用 `search_text` 定位内容。`path` 是文件路径；已保存的 HTTP 响应直接使用返回的 `result_path`。`keyword` 是 1～256 个字符的单行字面文本，不区分大小写；例如搜索 `provisioningState`，可以找到状态字段所在行。搜索从 `start_line=1` 开始，`max_matches` 通常为 50，上限 100。
+
+每个命中行返回一次，包含行号 `line`、首次命中的列号 `column` 和最多 512 个字符的片段 `text`。`text_start_column` 表示片段起点，`text_truncated` 表示片段没有包含整行；返回量达到限制时，`truncated` 为 true，并通过 `next_line` 继续搜索。行列从 1 开始，列按 UTF-16 字符计数，与读取工具一致。`matches_returned` 只统计当前页的命中行数。查看上下文继续使用 `read_file`；JSON 筛选和统计优先在 Azure API／Resource Graph 查询时完成。
+
+读取和搜索均受工具超时限制，搜索使用现有输出脱敏规则；搜索结果文件不会再次发起 HTTP 请求。
+
 ## 文件限制
 
 文本通常从第 1 行、第 1 列读 200 行；`max_lines` 上限 2,000，单次最多 32,768 个 UTF-16 字符。`truncated` 为 true 时，按 `next_line`、`next_column` 续读。超过 256 KiB 的文件流式读取并将换行统一为 LF（`line_endings_normalized`）；小文件保留原始换行。读取仍受工具超时限制。
 
 写入要求父目录存在，已有文件最多 256 KiB，最终内容最多 65,536 个字符。以 UTF-8 BOM 写入，不额外添加换行，写后重新读取校验。文件工具处理文本，不支持二进制文件。
 
-路径支持相对路径和本地盘符绝对路径，输入及解析后的路径均最多 240 个字符。拒绝 UNC、通配符、NTFS 备用数据流、设备名、符号链接及 junction。凭据路径（如 `.env`、`.env.*`、`.ssh`、`.kube`、`.azure`、常见私钥）、`.git`、`.flint`、当前配置和轨迹路径受保护。Flint 自身的 `agent.ps1`、`lib/`、`tools/` 允许读取，禁止由文件工具改写；目录授权不能解除这些保护。
+路径支持相对路径和本地盘符绝对路径，输入及解析后的路径均最多 240 个字符。路径参数拒绝 UNC、通配符、NTFS 备用数据流、设备名、符号链接及 junction；文件名过滤的通配符单独放在 `name_filter` 中。
+
+**Flint 仓库内所有普通文本文件均允许自动读取和搜索**，包括 `.env`、`.git`、`.flint`、配置和运行代码。这里的仓库指当前 Flint 安装目录（包含 `agent.ps1`、`lib/`、`tools/`），与启动时的工作目录分别判断，权限以解析后的完整路径为准。输出仍按现有规则脱敏。
+
+仓库外额外允许列出、读取和搜索当前 session 的 `.flint/results/<session-id>/`；其余凭据路径（如 `.env`、`.env.*`、`.ssh`、`.kube`、`.azure`、常见私钥）、`.git`、`.flint`、当前配置和轨迹路径继续禁止普通文件读取。写操作始终保留上述路径保护，同时禁止改写 Flint 的 `agent.ps1`、`lib/`、`tools/`；目录写授权不能解除这些保护。
 
 ## 会话与运行限制
+
+### 工具并行执行
+
+模型可以在一轮回复中提出多个工具调用。Flint 根据工具实现和实际参数决定执行顺序，不接受模型自行授予的只读分类。同一轮中连续、符合只读规则的调用按组并行执行，默认每组最多 4 个；一组完成后再处理下一组。`-MaxParallelTools` 可设为 1～8，设为 1 时全部串行。
+
+可并行的调用包括 `read_file`、`list_files`、`search_text`、Key Vault 元数据查询、Azure GET、已审核的 Resource Graph POST 查询，以及匹配 Git 只读规则的 kubectl 命令。文件写入、目录创建、其他 Azure 请求和未分类命令按顺序执行，并等待前面的读取组完成；即使已有 session 授权，也不会自动获得并行资格。未知工具名继续被拒绝。Azure 异步操作的状态轮询保留串行等待，遵守服务返回的查询间隔。
+
+例如“读取 A、读取 B、修改 A、再次读取 A”，前两个读取可以并行，修改会等两者结束，最后一次读取会等修改完成。依赖前一个结果才能确定参数的调用，模型应在收到结果后再提出。
+
+并行沿用独立的 Windows PowerShell 5.1 worker，主进程通过轮询收集结果。Azure token 在启动一组 worker 前由主进程串行准备；每个调用分别计算执行和重试预算，排队等待其他调用准备不占它的执行预算。可重试的读取独立退避，不重跑已完成的同组调用。某个工具失败或超时不会丢弃其他工具的已确认结果。停止或取消时清理所有活跃进程树，保留已经完成的结果；轨迹写入失败时停止后续动作。
+
+终端只由主进程更新：一条进度行显示耗时与剩余工具数量，每完成一个工具就输出一条摘要，失败时显示原因。结果通过 `call_id` 与原调用对应；主进程顺序写入轨迹，并通过 `tool_batch_started`、`tool_batch_finished` 记录并行组。`/status` 显示当前并发上限，退出时给出的恢复命令保留非默认设置。
+
+### 交互界面
 
 交互界面中，`Flint` 标签为金黄色，正文为亮白色，绿色专用于用户输入，回复中的代码为浅蓝色；恢复的历史对话沿用同一配色。颜色统一在 [lib/Console.ps1](lib/Console.ps1) 中维护。在输入提示处直接回车，提示停留在原行；终端不支持 ANSI 时，提示改为在下一行重新显示。
 
@@ -152,12 +190,15 @@ ConstrainedLanguage 不允许脚本读出按的是哪个键，Flint 改用系统
 
 轨迹默认保存在**工作目录**的 `.flint/trajectories/`，记录对话、工具调用、授权、重试和用量。`-TrajectoryDirectory` 可更改位置。`-Resume` 沿用原 session ID，恢复对话与累计用量。凭据在显示及记录前脱敏，当前 API Key 不写入快照；轨迹写入失败时停止后续动作。
 
+故障记录包含 `failure.message`、`error_id`、`exception_type`、`category` 和 `script_stack_trace`，覆盖模型请求、工具异常和 Azure 认证失败。`azure_initialized` 同时保存启动提示和认证失败原因；静默认证失败后登录成功时，也保留最初的失败信息。ARM 响应保留 `request_id`、`correlation_id` 和服务返回的 `service_error`，便于关联 Azure 服务端记录；这些信息沿用现有脱敏流程。
+
 Flint 目录的 `.env`、`.env.*` 和 `.flint/` 已被 Git 忽略，配置模板 `.env.example` 保留在仓库中。从其他仓库目录启动时，也需在该工作目录忽略 `.flint/`。`-TrajectoryDirectory` 只改变轨迹位置，Azure 响应文件始终保存在工作目录的 `.flint/results/`。
 
 | 参数或限制 | 默认值／上限 |
 |---|---|
 | `-ReasoningEffort` | `medium` |
 | `-MaxTurns`／`-MaxToolCalls` | 每次用户输入最多 20 轮、40 次工具调用 |
+| `-MaxParallelTools` | 默认 4，上限 8；设为 1 时串行执行 |
 | `-RequestTimeoutSec`／`-ToolTimeoutSec` | 模型 180 秒、工具 30 秒；包括重试，授权等待不计入工具超时 |
 | `-MaxOutputTokens`／`-ContextWindow` | 输出 4096 tokens；上下文 `0` 表示上限未知，可按部署设置 |
 | 模型请求体／工具参数 JSON | 最多 500,000／131,072 个字符 |
@@ -169,7 +210,7 @@ Flint 目录的 `.env`、`.env.*` 和 `.flint/` 已被 Git 忽略，配置模板
 
 HTTP 客户端在 worker 内存中缓冲完整响应，Flint 随后脱敏、保存并生成预览；响应落盘控制的是模型上下文大小，HTTP 正文没有 1 MiB 采集限制。登录和取 token 同步执行，等待时间由认证来源自身控制；取 token 返回后若工具预算已耗尽，Flint 不发送 HTTP 请求。
 
-模型请求、匹配 Git 只读规则的命令、Azure GET 和已审核的 Resource Graph POST 查询遇到可重试的临时错误时，Flint 按 1、2、4 秒退避，最多重试 3 次。Flint 不自动重试 session 授权的操作和文件写入。Azure HTTP 202 表示已接受请求，需继续查询状态才能确认完成；超时或取消的修改同样需先查询实际状态。达到上下文限制时停止，由用户缩小问题后新开一个会话。
+模型请求、匹配 Git 只读规则的命令、Azure GET 和已审核的 Resource Graph POST 查询遇到可重试的临时错误时，Flint 按 1、2、4 秒退避，最多重试 3 次。ARM 返回更长的有效 `Retry-After` 时按该值等待，剩余工具预算不足时停止重试。Flint 不自动重试 session 授权的操作和文件写入。Azure 异步修改按上述状态查询流程确认完成；超时或取消的修改同样需先查询实际状态。达到上下文限制时停止，由用户缩小问题后新开一个会话。
 
 ## 验证
 
@@ -183,4 +224,4 @@ powershell.exe -NoProfile -File .\tests\Preview.Ui.ps1
 powershell.exe -NoProfile -File .\tests\Preview.Exit.ps1
 ```
 
-测试在 Windows PowerShell 5.1 的 ConstrainedLanguage 下覆盖入口版本、文件分页与权限、Azure 认证来源选择与登录复用、完整响应保存与分页读取、REST 授权、命令执行、重试、取消、按 `s` 中止与继续、退出和会话恢复。Azure 测试使用本地 CLI 启动器、模拟的 `Az.Accounts` 模块和模拟 HTTP 响应；设备自身的执行策略和真实登录行为仍需在目标环境验证。
+测试在 Windows PowerShell 5.1 的 ConstrainedLanguage 下覆盖入口版本、文件分页与权限、Azure 认证来源选择与登录复用、完整响应保存与分页读取、REST 授权、命令执行、并发上限和写入顺序、独立重试、整批取消、日志写入失败、按 `s` 中止与继续、退出和会话恢复。Azure 测试使用本地 CLI 启动器、模拟的 `Az.Accounts` 模块和模拟 HTTP 响应；设备自身的执行策略和真实登录行为仍需在目标环境验证。

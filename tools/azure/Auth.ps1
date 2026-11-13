@@ -229,6 +229,7 @@ function Initialize-FlintAzure {
     if ($Session.Azure.Initialized) { return }
     $Session.Azure = @{ Initialized = $true; Status = 'unavailable'; AccessToken = $null; Account = ''; Tenant = $Session.AzureTenant; Provider = ''; CliPath = ''; ExpiresUtc = $null; Message = ''; LoginAttempted = $false }
     if ($Session.NoAzure) { $Session.Azure.Status = 'disabled'; $Session.Azure.Message = 'Azure tools are disabled by -NoAzure.'; return }
+    $failure = $null
     try {
         if ($Session.Azure.Tenant) { Assert-FlintAzureTenant $Session.Azure.Tenant }
         Select-FlintAzureProvider $Session
@@ -238,7 +239,10 @@ function Initialize-FlintAzure {
         try {
             Update-FlintAzureToken $Session
             $ready = $true
-        } catch { if (-not (Test-FlintAzureAuthenticationError $_.Exception.Message)) { throw } }
+        } catch {
+            $failure = Get-FlintFailureDetails $Session $_
+            if (-not (Test-FlintAzureAuthenticationError $_.Exception.Message)) { throw }
+        }
         if (-not $ready) {
             Initialize-FlintUi $Session
             if (-not $Session.Ui.Live) {
@@ -256,10 +260,15 @@ function Initialize-FlintAzure {
         }
         $Session.Azure.Status = 'ready'
     } catch {
+        $failure = Get-FlintFailureDetails $Session $_
         $Session.Azure.AccessToken = $null
         $Session.Azure.Message = 'Azure initialization failed: ' + (Protect-FlintText $Session $_.Exception.Message) + ' Restart Flint after resolving this issue.'
     } finally {
-        Write-FlintEvent $Session 'azure_initialized' @{ status = $Session.Azure.Status; provider = $Session.Azure.Provider; account = $Session.Azure.Account; tenant = $Session.Azure.Tenant; login_attempted = $Session.Azure.LoginAttempted }
+        Write-FlintEvent $Session 'azure_initialized' @{
+            status = $Session.Azure.Status; provider = $Session.Azure.Provider; account = $Session.Azure.Account
+            tenant = $Session.Azure.Tenant; login_attempted = $Session.Azure.LoginAttempted
+            message = $Session.Azure.Message; failure = $failure
+        }
         if ($Session.Azure.Status -eq 'ready') {
             Write-Host (Protect-FlintText $Session ('Signed in to Azure as {0} (tenant {1}, via {2})' -f $Session.Azure.Account, $Session.Azure.Tenant, (Get-FlintAzureProviderName $Session))) -ForegroundColor DarkGray
         } else { Write-Host $Session.Azure.Message -ForegroundColor Yellow }

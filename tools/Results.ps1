@@ -72,16 +72,3 @@ function Save-FlintAzureResult {
         output = $text.Substring(0, $previewLength); preview_truncated = ($previewLength -lt $text.Length)
     }
 }
-
-function Read-FlintResult {
-    param([string]$Root, [string]$SessionId, $ToolArguments)
-    if ($ToolArguments.result_id -cnotmatch '^[a-f0-9]{32}$') { throw 'Use the result_id returned by azure_request.' }
-    $directory = Get-FlintResultDirectory $Root $SessionId
-    $paths = @(foreach ($extension in @('.json', '.txt')) {
-        $candidate = Join-Path $directory ($ToolArguments.result_id + $extension)
-        Assert-FlintResultPath $candidate
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $candidate }
-    })
-    if ($paths.Count -ne 1) { throw 'The saved result was not found uniquely in this session. It may have been removed from disk.' }
-    return Read-FlintTextFile $paths[0] $ToolArguments
-}
