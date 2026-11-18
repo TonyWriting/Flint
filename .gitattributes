@@ -1,0 +1,3 @@
+# Flint runs only on Windows: check out text files with CRLF on every machine.
+# Git stores them normalized to LF, so diffs ignore line-ending changes.
+* text=auto eol=crlf
