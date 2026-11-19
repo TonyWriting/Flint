@@ -19,8 +19,7 @@ function New-FakeAzModule {
 }
 
 function Reset-AzureSession {
-    param([string]$Tenant = '')
-    $Session.Azure = @{}; $Session.NoAzure = $false; $Session.AzureTenant = $Tenant
+    $Session.Azure = @{}; $Session.NoAzure = $false
     Initialize-FlintUi $Session
     $Session.Ui.Live = $true
 }
@@ -142,13 +141,13 @@ exit /b 1
     Assert-True ((Test-FlintAzureAuthenticationError $message) -and (Get-FakeAzState).LoginCalls -eq 0) 'Classify Azure PowerShell interaction failures without signing in during a session.'
     Assert-True ((Test-FlintAzureAuthenticationError 'Restart Flint to sign in to Azure for Key Vault authentication.')) 'Classify provider-neutral restart messages as authentication failures.'
 
-    Set-FakeAzState @{ Context = $null; TokenFailure = ''; TokenTenant = '22222222-2222-2222-2222-222222222222'; SelectorOff = $false }
-    Reset-AzureSession 'contoso.onmicrosoft.com'
+    Set-FakeAzState @{ Context = $null; TokenFailure = ''; TokenTenant = ''; SelectorOff = $false }
+    Reset-AzureSession
     $null = Invoke-AzureStartup
     $state = Get-FakeAzState
-    Assert-True ($Session.Azure.Status -eq 'ready' -and $state.LoginCalls -eq 1 -and $state.LoginTenant -ceq 'contoso.onmicrosoft.com') 'Run Connect-AzAccount once for the selected tenant.'
+    Assert-True ($Session.Azure.Status -eq 'ready' -and $state.LoginCalls -eq 1 -and -not $state.LoginTenant) 'Run Connect-AzAccount once and let the sign-in choose the tenant.'
     Assert-True ($state.LoginSelectorOff -and $state.LoginEnvironmentClean) 'Disable the subscription selector for this process and hide Flint secrets during sign-in.'
-    Assert-True ($Session.Azure.Tenant -eq '22222222-2222-2222-2222-222222222222') 'Accept a tenant domain resolved to its tenant ID.'
+    Assert-True ($Session.Azure.Tenant -eq '11111111-1111-1111-1111-111111111111') 'Use the tenant of the new sign-in.'
     foreach ($name in $secretNames) {
         Assert-True ((Get-Item -LiteralPath ('Env:' + $name)).Value -ceq 'must-not-reach-sign-in') 'Restore Flint environment values after sign-in.'
     }

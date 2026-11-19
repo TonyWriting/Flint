@@ -54,7 +54,7 @@ function New-TestRuntime {
     param([string]$Path)
     $source = $script:RepoRoot
     New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
-    foreach ($file in @('agent.ps1', '.env.example')) { Copy-Item -LiteralPath (Join-Path $source $file) -Destination $Path }
+    foreach ($file in @('agent.ps1', 'flint.example.ini')) { Copy-Item -LiteralPath (Join-Path $source $file) -Destination $Path }
     foreach ($directory in @('lib', 'tools', 'docs')) { Copy-Item -LiteralPath (Join-Path $source $directory) -Destination $Path -Recurse }
     foreach ($worker in @('lib\ModelWorker.ps1', 'tools\Worker.ps1')) {
         $entry = Join-Path $Path $worker
@@ -98,6 +98,18 @@ function New-TestPlugin {
     return $Path
 }
 
+function New-TestSetup {
+    param([string]$Path, [string[]]$Template, [string[]]$Plugins = @('example'))
+    # A fictional team setup folder: a flint.ini template without a key and Plugins\<name> folders.
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    if ($null -eq $Template) {
+        $Template = @('[model]', 'endpoint = https://contoso.services.ai.azure.com/openai/v1/responses', 'deployment = team-model', 'api_key_help = Ask the team for the key.')
+    }
+    Set-Content -LiteralPath (Join-Path $Path 'flint.ini') -Encoding UTF8 -Value $Template
+    foreach ($name in $Plugins) { $null = New-TestPlugin (Join-Path $Path ('Plugins\' + $name)) -Name $name }
+    return $Path
+}
+
 function Remove-TestFixture {
     $resolved = (Resolve-Path -LiteralPath $script:TestRoot).ProviderPath
     if ($resolved -ne $script:TestRoot -or (Split-Path $resolved -Parent) -ne $script:TestParent) {
@@ -114,14 +126,14 @@ $script:TestParent = (Get-Item -LiteralPath $env:TEMP -Force).FullName.TrimEnd('
 $script:TestRoot = Join-Path $script:TestParent ('flint-tests-' + [guid]::NewGuid().ToString('N'))
 $script:WorkRoot = Join-Path $script:TestRoot 'work'
 New-Item -ItemType Directory -Path $script:WorkRoot -Force | Out-Null
-$config = Join-Path $script:TestRoot '.env'
-Set-Content -LiteralPath $config -Encoding UTF8 -Value @(
-    'AZURE_OPENAI_ENDPOINT=https://test.services.ai.azure.com/openai/v1/responses'
-    'AZURE_OPENAI_API_KEY=test-api-key'
-    'AZURE_OPENAI_DEPLOYMENT=test-deployment'
-)
+function Get-TestConfigLines {
+    # A complete configuration for offline suites.
+    return @('[model]', 'endpoint = https://test.services.ai.azure.com/openai/v1/responses', 'deployment = test-deployment', 'api_key = test-api-key')
+}
+$config = Join-Path $script:TestRoot 'flint.ini'
+Set-Content -LiteralPath $config -Encoding UTF8 -Value (Get-TestConfigLines)
 Push-Location -LiteralPath $script:WorkRoot
-try { $script:Session = New-AgentSession -EnvFile $config } finally { Pop-Location }
+try { $script:Session = New-AgentSession -ConfigFile $config } finally { Pop-Location }
 $script:Session.PermissionSessionDirectory = Join-Path $script:TestRoot 'permissions'
 $script:Session.WorkerPath = New-TestWorkerLauncher $script:Session.WorkerPath (Join-Path $script:TestRoot 'tool-launcher.ps1')
 $script:Session.ModelWorkerPath = New-TestWorkerLauncher $script:Session.ModelWorkerPath (Join-Path $script:TestRoot 'model-launcher.ps1')

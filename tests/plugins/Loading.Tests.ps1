@@ -28,7 +28,7 @@ try {
     $baseTools = ConvertTo-Json -InputObject $Session.Tools -Depth 16 -Compress
     $baseInstructions = $Session.Instructions
     Push-Location -LiteralPath $WorkRoot
-    try { $script:Session = New-AgentSession -EnvFile $config } finally { Pop-Location }
+    try { $script:Session = New-AgentSession -ConfigFile $config } finally { Pop-Location }
     $Session.PermissionSessionDirectory = Join-Path $TestRoot 'permissions'
 
     Assert-True (@($Session.Plugins).Count -eq 1 -and $Session.Plugins[0].name -ceq 'example') 'Load valid plugins and skip staging directories.'
@@ -105,12 +105,12 @@ try {
     Assert-True ($checkpoint.data.version -eq 3 -and $checkpoint.data.plugins[0].version -ceq '1.0.0') 'Checkpoint the plugin set with the conversation.'
     $historyCount = @($Session.History).Count
     Push-Location -LiteralPath $WorkRoot
-    try { $same = New-AgentSession -EnvFile $config -Resume $Session.Id } finally { Pop-Location }
+    try { $same = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
     Assert-True (@($same.PluginChanges).Count -eq 0 -and @($same.History).Count -eq $historyCount) 'An unchanged plugin set adds nothing on resume.'
     $null = New-TestPlugin (Join-Path $plugins 'example') -Version '1.1.0'
     $null = New-TestPlugin (Join-Path $plugins 'extra') -Name 'extra'
     Push-Location -LiteralPath $WorkRoot
-    try { $changed = New-AgentSession -EnvFile $config -Resume $Session.Id } finally { Pop-Location }
+    try { $changed = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
     $changes = @($changed.PluginChanges) -join '; '
     Assert-True ($changes -ceq 'example 1.0.0 -> 1.1.0; added extra 1.0.0') ('Report plugin changes on resume: ' + $changes)
     $note = @($changed.History)[-1]
@@ -119,13 +119,13 @@ try {
     $resumedBanner = (Show-FlintSession $changed 6>&1 | Out-String)
     Assert-True ($resumedBanner.Contains('Plugins changed since this conversation was saved: example 1.0.0 -> 1.1.0; added extra 1.0.0')) 'Show plugin changes when a conversation is restored.'
     Push-Location -LiteralPath $WorkRoot
-    try { $again = New-AgentSession -EnvFile $config -Resume $Session.Id } finally { Pop-Location }
+    try { $again = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
     Assert-True (@($again.PluginChanges).Count -eq 0 -and @($again.History)[-1].role -ceq 'developer') 'The note is saved once; the next resume compares against the updated checkpoint.'
 
     Push-Location -LiteralPath $WorkRoot
-    try { $old = New-AgentSession -EnvFile $config } finally { Pop-Location }
+    try { $old = New-AgentSession -ConfigFile $config } finally { Pop-Location }
     Write-FlintEvent $old 'session_checkpoint' @{ version = 2; root = $old.Root; model = $old.Model; history_count = 0; omitted_call_ids = @(); state = @{} }
     Push-Location -LiteralPath $WorkRoot
-    try { Assert-Throws { New-AgentSession -EnvFile $config -Resume $old.Id } '*earlier Flint versions*' } finally { Pop-Location }
+    try { Assert-Throws { New-AgentSession -ConfigFile $config -Resume $old.Id } '*earlier Flint versions*' } finally { Pop-Location }
     Write-Host 'All plugin loading tests passed.'
 } finally { Remove-TestFixture }

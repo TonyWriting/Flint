@@ -55,7 +55,7 @@ try {
     Assert-True ($running.status -eq 'pending' -and $running.operation_status -eq 'Running' -and $running.poll_path -eq $operationPath) 'Retain the polling address when an in-progress response omits it.'
     Write-FlintCheckpoint $Session
     Push-Location -LiteralPath $WorkRoot
-    try { $script:Session = New-AgentSession -EnvFile $config -Resume $Session.Id } finally { Pop-Location }
+    try { $script:Session = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
     $Session.PermissionSessionDirectory = Join-Path $TestRoot 'permissions'
     Set-OperationFixtureIdentity
     $done = Invoke-OperationFixture GET $running.poll_path

@@ -8,7 +8,7 @@ function Reset-AzureFixture {
     $script:Accounts = @(New-AzureFixtureAccount); $script:LoginAccount = New-AzureFixtureAccount
     $script:LoginCalls = 0; $script:TokenCalls = 0; $script:CliCalls = 0
     $script:CliFailure = ''; $script:TokenFailure = ''; $script:LoginFailure = $false; $script:TokenTenant = ''
-    $Session.Azure = @{}; $Session.NoAzure = $false; $Session.AzureTenant = ''
+    $Session.Azure = @{}; $Session.NoAzure = $false
     Initialize-FlintUi $Session
     $Session.Ui.Live = $true
 }
@@ -87,22 +87,14 @@ try {
     Assert-True ($Session.Azure.Status -eq 'disabled' -and $CliCalls -eq 0) 'Offline mode never invokes the CLI.'
 
     Reset-AzureFixture
-    $Session.AzureTenant = '33333333-3333-3333-3333-333333333333'
-    Initialize-FlintAzure $Session
-    Assert-True ($Session.Azure.Tenant -eq $Session.AzureTenant -and $LoginCalls -eq 0) 'Request a token for the selected tenant independently of the default subscription.'
-
-    Reset-AzureFixture
-    $Session.AzureTenant = 'contoso.onmicrosoft.com'
-    $script:TokenTenant = '11111111-1111-1111-1111-111111111111'
     $script:Accounts[0].id = 'tenant-level-account'; $script:Accounts[0].state = $null
     Initialize-FlintAzure $Session
-    Assert-True ($Session.Azure.Status -eq 'ready' -and $Session.Azure.Tenant -eq $script:TokenTenant -and $LoginCalls -eq 0) 'Accept a tenant domain and a cached account without a subscription.'
+    Assert-True ($Session.Azure.Status -eq 'ready' -and $Session.Azure.Tenant -eq '11111111-1111-1111-1111-111111111111' -and $LoginCalls -eq 0) 'Use the tenant of the current sign-in, including a cached account without a subscription.'
 
     Reset-AzureFixture
-    $Session.AzureTenant = '11111111-1111-1111-1111-111111111111'
     $script:TokenTenant = '33333333-3333-3333-3333-333333333333'
     Initialize-FlintAzure $Session
-    Assert-True ($Session.Azure.Status -eq 'unavailable' -and $LoginCalls -eq 0) 'Reject a token for a different explicit tenant ID.'
+    Assert-True ($Session.Azure.Status -eq 'unavailable' -and $LoginCalls -eq 0) 'Reject a token for a tenant other than the signed-in one.'
 
     Reset-AzureFixture
     $script:Accounts[0].user.type = 'servicePrincipal'

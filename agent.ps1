@@ -2,7 +2,6 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Prompt,
-    [string]$EnvFile,
     [string]$Resume,
     [ValidateSet('none', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
     [ValidateRange(1, 1000)][int]$MaxTurns = 20,
@@ -13,17 +12,15 @@ param(
     [ValidateRange(256, 32768)][int]$MaxOutputTokens = 4096,
     [ValidateRange(0, 2000000)][int]$ContextWindow = 0,
     [string]$TrajectoryDirectory,
-    [ValidateLength(1, 253)][ValidatePattern('^(?:[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+)$')][string]$AzureTenant,
     [switch]$NoAzure,
-    [string]$InstallPlugin,
-    [string]$ValidatePlugin
+    [string]$Setup,
+    [string]$ValidateSetup
 )
 
 if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
     throw ('Flint requires Windows PowerShell 5.1. Current version: {0}. Start Flint with powershell.exe -NoProfile -File "{1}".' -f $PSVersionTable.PSVersion, $PSCommandPath)
 }
 
-if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
 . (Join-Path $PSScriptRoot 'tools\Registry.ps1')
 . (Join-Path $PSScriptRoot 'tools\Commands.ps1')
 . (Join-Path $PSScriptRoot 'tools\Files.ps1')
@@ -32,26 +29,26 @@ if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
 foreach ($component in @('Http', 'KeyVault', 'Auth', 'Controller')) {
     . (Join-Path $PSScriptRoot ('tools\azure\' + $component + '.ps1'))
 }
-foreach ($component in @('Security', 'Telemetry', 'Config', 'Plugins', 'PluginInstall', 'Sessions', 'Markdown', 'Console', 'Ui', 'Runtime', 'Permissions', 'Results', 'WorkerTransport', 'ToolExecution', 'Parallel', 'Context', 'Client', 'Loop')) {
+foreach ($component in @('Security', 'Telemetry', 'Config', 'Plugins', 'Setup', 'Sessions', 'Markdown', 'Console', 'Ui', 'Runtime', 'Permissions', 'Results', 'WorkerTransport', 'ToolExecution', 'Parallel', 'Context', 'Client', 'Loop')) {
     . (Join-Path $PSScriptRoot ('lib\' + $component + '.ps1'))
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
     $ErrorActionPreference = 'Stop'
-    # Plugin maintenance runs without a model configuration or a conversation.
-    if ($InstallPlugin -or $ValidatePlugin) {
+    # Setup runs before any configuration exists and never starts a conversation.
+    if ($Setup -or $ValidateSetup) {
         try {
-            if ($InstallPlugin -and $ValidatePlugin) { throw 'Use either -InstallPlugin or -ValidatePlugin.' }
-            if ($ValidatePlugin) {
-                $plugin = Test-FlintPlugin $ValidatePlugin
-                Write-Host 'The plugin is valid.' -ForegroundColor Green
-                Show-FlintPluginSummary $plugin
+            if ($Setup -and $ValidateSetup) { throw 'Use either -Setup or -ValidateSetup.' }
+            if ($ValidateSetup) {
+                $checked = Test-FlintSetup $ValidateSetup
+                Write-Host 'The setup is valid.' -ForegroundColor Green
+                Show-FlintSetupSummary $checked
+                foreach ($plugin in @($checked.plugins)) { Show-FlintPluginSummary $plugin }
             } else {
-                # Install steps already report validation and placement; finish with the outcome only.
-                $installed = Install-FlintPlugin $InstallPlugin
-                $message = 'Installed plugin ' + $installed.plugin.name + ' ' + $installed.plugin.version
-                if ($installed.previous_version) { $message += ', replacing ' + $installed.previous_version }
-                Write-Host ($message + '. New Flint sessions will load it.') -ForegroundColor Green
+                # Each step already reported its outcome; finish with what to do next.
+                $null = Install-FlintSetup $Setup
+                Write-Host 'Setup complete. Start Flint with:' -ForegroundColor Green
+                Write-Host ("  & '" + $PSCommandPath.Replace("'", "''") + "'")
             }
             exit 0
         } catch {
@@ -62,11 +59,11 @@ if ($MyInvocation.InvocationName -ne '.') {
     $session = $null
     $exitReason = 'cancelled'
     try {
-        $session = New-AgentSession -EnvFile $EnvFile -Resume $Resume -Effort $ReasoningEffort `
+        $session = New-AgentSession -Resume $Resume -Effort $ReasoningEffort `
             -RequestTimeoutSec $RequestTimeoutSec -ToolTimeoutSec $ToolTimeoutSec `
             -MaxToolCalls $MaxToolCalls -MaxParallelTools $MaxParallelTools -MaxOutputTokens $MaxOutputTokens `
             -ContextWindow $ContextWindow -TrajectoryDirectory $TrajectoryDirectory `
-            -AzureTenant $AzureTenant -NoAzure:$NoAzure
+            -NoAzure:$NoAzure
         $session.TurnLimit = $MaxTurns
         Show-FlintSession $session
         Initialize-FlintAzure $session

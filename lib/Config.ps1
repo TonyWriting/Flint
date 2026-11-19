@@ -32,40 +32,77 @@ You are Flint, a lightweight diagnostic assistant for restricted Windows environ
 '@
 }
 
-function Read-FlintConfig {
-    param([string]$EnvFile)
-    if ([string]::IsNullOrWhiteSpace($EnvFile)) { $EnvFile = Join-Path (Split-Path $PSScriptRoot -Parent) '.env' }
-    if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
-        $templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) '.env.example'
-        throw "Configuration file not found: '$EnvFile'. Create this file using the template '$templatePath'. Fill in AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY and AZURE_OPENAI_DEPLOYMENT, then run Flint again."
-    }
-    if ((Get-Item -LiteralPath $EnvFile -Force -ErrorAction Stop).PSProvider.Name -ne 'FileSystem') {
-        throw 'EnvFile must point to a filesystem file.'
-    }
-    $configPath = (Resolve-Path -LiteralPath $EnvFile -ErrorAction Stop).ProviderPath
-    $settings = @{
-        AZURE_OPENAI_ENDPOINT = $env:AZURE_OPENAI_ENDPOINT
-        AZURE_OPENAI_API_KEY = $env:AZURE_OPENAI_API_KEY
-        AZURE_OPENAI_DEPLOYMENT = $env:AZURE_OPENAI_DEPLOYMENT
-    }
-    foreach ($line in Get-Content -LiteralPath $configPath -Encoding UTF8 -ErrorAction Stop) {
-        if ($line -notmatch '^\s*(?:export\s+)?(AZURE_OPENAI_ENDPOINT|AZURE_OPENAI_API_KEY|AZURE_OPENAI_DEPLOYMENT)\s*=(.*)$') { continue }
-        $name = $Matches[1]; $value = $Matches[2].Trim()
+function Get-FlintDefaultConfigPath { return Join-Path (Split-Path $PSScriptRoot -Parent) 'flint.ini' }
+
+function Get-FlintConfigSchema {
+    # Every accepted section and setting; anything else in the file is reported as an error.
+    return @{ model = @('endpoint', 'deployment', 'api_key', 'api_key_help') }
+}
+
+function Read-FlintIniFile {
+    param([string]$Path, [hashtable]$Schema)
+    # Comments take whole lines (; or #), so values such as keys and URLs are never split.
+    # Errors name the line and setting but never echo a value, which may be a credential.
+    $values = @{}
+    $section = ''
+    $number = 0
+    foreach ($line in @(Get-Content -LiteralPath $Path -Encoding UTF8 -ErrorAction Stop)) {
+        $number++
+        $text = ([string]$line).Trim()
+        if (-not $text -or $text.StartsWith(';') -or $text.StartsWith('#')) { continue }
+        if ($text -match '^\[\s*([A-Za-z][A-Za-z0-9_.-]*)\s*\]$') {
+            $section = $Matches[1].ToLowerInvariant()
+            if (-not $Schema.ContainsKey($section)) {
+                throw ('Line {0}: unknown section [{1}]. Use {2}.' -f $number, $section, ((@($Schema.Keys) | Sort-Object | ForEach-Object { '[' + $_ + ']' }) -join ', '))
+            }
+            continue
+        }
+        if ($text -notmatch '^([A-Za-z][A-Za-z0-9_]*)\s*=(.*)$') { throw ('Line {0} is not a [section], a name = value setting or a comment.' -f $number) }
+        $name = $Matches[1].ToLowerInvariant(); $value = $Matches[2].Trim()
+        if (-not $section) { throw ('Line {0}: {1} must follow a section header such as [model].' -f $number, $name) }
+        if ($Schema[$section] -cnotcontains $name) {
+            throw ("Line {0}: unknown setting '{1}' in [{2}]. Use {3}." -f $number, $name, $section, ($Schema[$section] -join ', '))
+        }
+        $key = $section + '.' + $name
+        if ($values.ContainsKey($key)) { throw ("Line {0}: '{1}' is set more than once in [{2}]." -f $number, $name, $section) }
         if ($value.StartsWith('"') -or $value.StartsWith("'")) {
-            if ($value -notmatch '^([''"])(.*?)\1\s*(?:#.*)?$') { throw "Invalid quoted value for $name in the configuration file." }
-            $value = $Matches[2]
-        } else { $value = ($value -replace '(^|\s+)#.*$', '').TrimEnd() }
-        $settings[$name] = $value
+            if ($value.Length -lt 2 -or $value[-1] -ne $value[0]) { throw ("Line {0}: the value of '{1}' has an unmatched quote." -f $number, $name) }
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        $values[$key] = $value
     }
-    foreach ($name in @('AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_DEPLOYMENT')) {
-        if ([string]::IsNullOrWhiteSpace($settings[$name])) { throw "Set $name in the configuration file or the environment." }
-        $settings[$name] = $settings[$name].Trim()
+    return $values
+}
+
+function ConvertTo-FlintModelConfig {
+    param([hashtable]$Values, [switch]$WithoutKey)
+    # Shared by flint.ini and team setup templates; a template leaves the key to each user.
+    $required = @('endpoint', 'deployment')
+    if (-not $WithoutKey) { $required += 'api_key' }
+    foreach ($name in $required) {
+        if ([string]::IsNullOrWhiteSpace($Values['model.' + $name])) { throw ('Set ' + $name + ' under [model].') }
     }
-    $apiEndpoint = $settings.AZURE_OPENAI_ENDPOINT
+    $apiEndpoint = $Values['model.endpoint']
     $apiUri = $apiEndpoint -as [uri]
     if (-not $apiUri -or -not $apiUri.IsAbsoluteUri -or $apiUri.Scheme -ne 'https' -or
         -not $apiUri.Host -or $apiUri.UserInfo -or $apiUri.Query -or $apiUri.Fragment -or $apiUri.AbsolutePath -cne '/openai/v1/responses') {
-        throw 'AZURE_OPENAI_ENDPOINT must be a complete HTTPS URL ending in /openai/v1/responses, without credentials, query or fragment.'
+        throw 'endpoint under [model] must be a complete HTTPS URL ending in /openai/v1/responses, without credentials, query or fragment.'
     }
-    return @{ ConfigPath = $configPath; ApiEndpoint = $apiEndpoint; ApiKey = $settings.AZURE_OPENAI_API_KEY; Model = $settings.AZURE_OPENAI_DEPLOYMENT }
+    $help = [string]$Values['model.api_key_help']
+    if ($help.Length -gt 400) { throw 'api_key_help under [model] is limited to 400 characters.' }
+    return @{ ApiEndpoint = $apiEndpoint; Model = $Values['model.deployment']; ApiKey = [string]$Values['model.api_key']; ApiKeyHelp = $help }
+}
+
+function Read-FlintConfig {
+    param([string]$ConfigFile)
+    if ([string]::IsNullOrWhiteSpace($ConfigFile)) { $ConfigFile = Get-FlintDefaultConfigPath }
+    if (-not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) {
+        $templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'flint.example.ini'
+        throw ("Configuration file not found: '{0}'. Run agent.ps1 -Setup with the setup folder your team provides, or copy the template '{1}' to this path and set endpoint, deployment and api_key under [model]." -f $ConfigFile, $templatePath)
+    }
+    $configPath = (Resolve-Path -LiteralPath $ConfigFile -ErrorAction Stop).ProviderPath
+    try { $config = ConvertTo-FlintModelConfig (Read-FlintIniFile $configPath (Get-FlintConfigSchema)) }
+    catch { throw ("Invalid configuration file '{0}'. {1}" -f $configPath, $_.Exception.Message) }
+    $config.ConfigPath = $configPath
+    return $config
 }
