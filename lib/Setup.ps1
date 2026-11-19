@@ -245,12 +245,13 @@ function Show-FlintPluginSummary {
 
 function Read-FlintSetupApiKey {
     param([bool]$HasCurrent)
-    # A terminal hides the key as it is typed; piped input is read as a plain line.
     $prompt = 'Paste the API key'
     if ($HasCurrent) { $prompt += ' (press Enter to keep the current key)' }
-    $console = @{}
-    Initialize-FlintUi $console
-    if (-not $console.Ui.Live) { return [string](Read-Host -Prompt $prompt) }
+    # Only input piped into the console host is read as a plain line. Typed input stays hidden even when the
+    # output is redirected or another host, such as the ISE, runs setup.
+    $piped = $false
+    if ($Host.Name -ceq 'ConsoleHost') { try { $piped = [Console]::IsInputRedirected } catch { $piped = $false } }
+    if ($piped) { return [string](Read-Host -Prompt $prompt) }
     $secure = Read-Host -Prompt $prompt -AsSecureString
     # PSCredential is a core type, so this conversion also works in ConstrainedLanguage.
     return (New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList 'flint', $secure).GetNetworkCredential().Password
@@ -264,7 +265,21 @@ function Format-FlintIniValue {
     return $Value
 }
 
-function Write-FlintConfigFile {
+function Resolve-FlintSetupConfigPath {
+    param([string]$Path)
+    # Checked before anything changes: a bare file name is relative to the current folder, the folder must exist,
+    # and the path must not be a folder itself.
+    if (Test-Path -LiteralPath $Path -PathType Container) { throw ("ConfigFile must name a file, but '" + $Path + "' is a folder.") }
+    $parent = Split-Path $Path -Parent
+    if (-not $parent) { $parent = '.' }
+    $folder = Get-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
+    if (-not $folder -or -not $folder.PSIsContainer -or $folder.PSProvider.Name -ne 'FileSystem') {
+        throw ("The folder for ConfigFile does not exist: '" + $parent + "'. Create it or choose another path.")
+    }
+    return Join-Path $folder.FullName (Split-Path $Path -Leaf)
+}
+
+function Save-FlintStagedConfig {
     param([string]$Path, [string]$Source, $Model, [string]$ApiKey)
     $lines = @(
         ('; Written by agent.ps1 -Setup from ' + $Source + '. Run -Setup again to update. Keep this file private.')
@@ -274,12 +289,14 @@ function Write-FlintConfigFile {
     )
     if ($Model.ApiKeyHelp) { $lines += ('api_key_help = ' + (Format-FlintIniValue $Model.ApiKeyHelp)) }
     $lines += ('api_key = ' + (Format-FlintIniValue $ApiKey))
-    $directory = Split-Path $Path -Parent
-    $temporary = Join-Path $directory ('.flint-' + [guid]::NewGuid().ToString('N') + '.tmp')
-    try {
-        Set-Content -LiteralPath $temporary -Value $lines -Encoding UTF8 -ErrorAction Stop
-        Move-Item -LiteralPath $temporary -Destination $Path -Force -ErrorAction Stop
-    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    # Staged next to the target, so replacing flint.ini later is a rename within one folder.
+    $staged = Join-Path (Split-Path $Path -Parent) ('.flint-' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try { Set-Content -LiteralPath $staged -Value $lines -Encoding UTF8 -ErrorAction Stop }
+    catch {
+        Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+        throw ("Could not write the new configuration next to '" + $Path + "': " + $_.Exception.Message)
+    }
+    return $staged
 }
 
 function Install-FlintPluginCopy {
@@ -364,9 +381,11 @@ function Install-FlintSetup {
     param([string]$Source, [string]$ConfigFile, [string]$PluginDirectory)
     if (-not $ConfigFile) { $ConfigFile = Get-FlintDefaultConfigPath }
     if (-not $PluginDirectory) { $PluginDirectory = Get-FlintPluginDirectory }
+    $ConfigFile = Resolve-FlintSetupConfigPath $ConfigFile
     $parsed = ConvertFrom-FlintSetupSource $Source
     $workParent = (Get-Item -LiteralPath $env:TEMP -Force).FullName.TrimEnd('\')
     $work = Join-Path $workParent ('flint-setup-' + [guid]::NewGuid().ToString('N'))
+    $staged = $null
     try {
         $commit = $null
         if ($parsed.kind -ceq 'directory') { $folder = $parsed.path }
@@ -400,11 +419,17 @@ function Install-FlintSetup {
         if (-not $key) { $key = $current }
         if (-not $key) { throw 'An API key is required. Run -Setup again and paste the key.' }
         if ($key -match '[\x00-\x1f\x7f]') { throw 'The API key cannot contain line breaks or control characters.' }
-        # Plugins change first: if copying fails, flint.ini still describes the previous setup.
+        # Write the new flint.ini before plugins change, so a folder that cannot take it fails while nothing has
+        # changed. If a plugin then fails, the previous flint.ini stays; afterwards only a rename remains.
+        $staged = Save-FlintStagedConfig $ConfigFile $parsed.display $setup.model $key
         $removed = @(Sync-FlintPlugins $setup.plugins $PluginDirectory $parsed $commit)
         $started = [datetime]::UtcNow
-        Write-FlintConfigFile $ConfigFile $parsed.display $setup.model $key
+        try { Move-Item -LiteralPath $staged -Destination $ConfigFile -Force -ErrorAction Stop; $staged = $null }
+        catch { throw ("The plugins were updated, but '" + $ConfigFile + "' could not be replaced: " + $_.Exception.Message + ' Close any program that has it open and run -Setup again.') }
         Write-FlintSetupStep ('Wrote ' + $ConfigFile) $started
         return @{ setup = $setup; config = $ConfigFile; removed = $removed }
-    } finally { Remove-FlintDirectoryTree $work $workParent }
+    } finally {
+        if ($staged) { Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue }
+        Remove-FlintDirectoryTree $work $workParent
+    }
 }

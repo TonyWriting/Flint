@@ -113,6 +113,19 @@ try {
     $longParent = Join-Path $TestRoot ('p' * (212 - $TestRoot.Length))
     $script:KeyInput = 'long-key'
     Assert-Throws { Install-FlintSetup $source (Join-Path $TestRoot 'long.ini') $longParent } '*longer than 240 characters*'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $TestRoot 'long.ini')) -and @(Get-ChildItem -LiteralPath $TestRoot -Filter '.flint-*' -Force).Count -eq 0) 'A failed plugin sync leaves flint.ini unchanged and removes the staged copy.'
+
+    # ConfigFile is checked before the key prompt and before any change; a bare file name is relative to the current folder.
+    $untouched = Join-Path $TestRoot 'untouched-plugins'
+    $script:KeyPrompts = @()
+    Assert-Throws { Install-FlintSetup $source $configDirectory $untouched } '*ConfigFile must name a file*is a folder*'
+    Assert-Throws { Install-FlintSetup $source (Join-Path $TestRoot 'missing\flint.ini') $untouched } '*folder for ConfigFile does not exist*'
+    Assert-True ($KeyPrompts.Count -eq 0 -and -not (Test-Path -LiteralPath $untouched)) 'Reject a folder or a missing parent before asking for the key or changing plugins.'
+    $script:KeyInput = 'relative-key'
+    Push-Location $configDirectory
+    try { $result = Install-FlintSetup $source 'team.ini' (Join-Path $TestRoot 'relative-plugins') } finally { Pop-Location }
+    $expected = Join-Path $configDirectory 'team.ini'
+    Assert-True ($result.config -ieq $expected -and (Read-TestConfig $expected)['model.api_key'] -ceq 'relative-key') 'Write a bare file name to the current folder and return its full path.'
 
     # Archives from the Azure DevOps download button contain one top-level folder; flint.ini at the root also works.
     $tar = Join-Path $env:SystemRoot 'System32\tar.exe'

@@ -48,8 +48,9 @@ if ($MyInvocation.InvocationName -ne '.') {
                 foreach ($plugin in @($checked.plugins)) { Show-FlintPluginSummary $plugin }
             } else {
                 # Each step already reported its outcome; finish with what to do next.
-                $null = Install-FlintSetup $Setup $ConfigFile
-                Write-Host 'Setup complete. Start Flint with .\agent.ps1' -ForegroundColor Green
+                $installed = Install-FlintSetup $Setup $ConfigFile
+                Write-Host 'Setup complete. Start Flint with:' -ForegroundColor Green
+                Write-Host ('  ' + (Get-FlintStartCommand $PSCommandPath $installed.config))
             }
             exit 0
         } catch {

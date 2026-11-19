@@ -136,6 +136,7 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     $runtimePlugin = Join-Path (Split-Path $cliPath -Parent) 'plugins\example\plugin.json'
     Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('Setup complete.') -and (Test-Path -LiteralPath $runtimePlugin)) ('Set up the invoked runtime from a team folder: ' + $transcript)
     Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript -match 'Installed example 1\.0\.0 \(\d+\.\ds\)' -and $transcript.Contains('Wrote ' + $setupConfig)) 'Show where to get the key and report each step with its duration.'
+    Assert-True ($transcript.Contains("& '" + $cliPath + "' -ConfigFile '" + $setupConfig + "'")) ('Name the invoked entry point and the custom configuration in the start command: ' + $transcript)
     Assert-True ((Read-FlintConfig $setupConfig).ApiKey -ceq 'pasted-team-key') 'Write the key read from input to flint.ini.'
     $statusLogs = Join-Path $TestRoot 'plugin-logs'
     $output = @('/status', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $statusLogs
