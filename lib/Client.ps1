@@ -148,6 +148,9 @@ function Invoke-AgentResponse {
             }
         }
         if ($Session.StopRequested) { throw 'Stopped by the user.' }
-        throw ('Azure OpenAI request failed (HTTP {0}): {1}' -f $failure.http_status, $failure.message)
+        $message = 'Azure OpenAI request failed (HTTP {0}): {1}' -f $failure.http_status, $failure.message
+        # A rejected key usually means it was rotated; point to where the team keeps the current one.
+        if ($failure.http_status -eq 401 -and $Session.ApiKeyHelp) { $message += ' ' + $Session.ApiKeyHelp }
+        throw $message
     }
 }

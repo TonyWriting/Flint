@@ -32,7 +32,7 @@ try {
     Write-Host ('Testing config with PowerShell {0}, {1}' -f $PSVersionTable.PSVersion, $ExecutionContext.SessionState.LanguageMode)
     $rejectedLogs = Join-Path $testRoot 'rejected-logs'
     Assert-Throws { New-AgentSession -ConfigFile $missing -TrajectoryDirectory $rejectedLogs } '*Configuration file not found*'
-    Assert-Throws { New-AgentSession -ConfigFile $missing } '*Copy the template*flint.example.ini*set endpoint, deployment and api_key under `[model`]*'
+    Assert-Throws { New-AgentSession -ConfigFile $missing } '*agent.ps1 -Setup*copy the template*flint.example.ini*set endpoint, deployment and api_key under `[model`]*'
     Assert-True (-not (Test-Path -LiteralPath $missing)) 'Explain how to create the missing configuration without generating a placeholder file.'
     Assert-Throws { New-AgentSession -ConfigFile $testRoot } '*Configuration file not found*'
     Assert-True (-not (Test-Path -LiteralPath $rejectedLogs)) 'Require a real config file before creating a session.'
@@ -62,6 +62,9 @@ try {
 
     Write-Config @('[model]', $endpoint, $deployment, 'api_key = "$(throw ''must not run'')-$VARIABLE"')
     Assert-True ((Read-FlintConfig $config).ApiKey -ceq '$(throw ''must not run'')-$VARIABLE') 'Treat configuration as literal text.'
+    Write-Config @('[model]', $endpoint, $deployment, $apiKey, 'api_key_help = Get a new key from the team vault; ask #flint-help.')
+    $session = New-AgentSession -ConfigFile $config
+    Assert-True ($session.ApiKeyHelp -ceq 'Get a new key from the team vault; ask #flint-help.' -and (Read-FlintConfig $config).ApiKeyHelp) 'Keep the optional key help for rejected keys.'
 
     $env:AZURE_OPENAI_API_KEY = 'environment-key'
     foreach ($case in @(
@@ -69,7 +72,7 @@ try {
         @{ lines = @('[model]', $deployment, $apiKey); pattern = '*Set endpoint under `[model`]*' },
         @{ lines = @('[model]', $endpoint, $apiKey); pattern = '*Set deployment under `[model`]*' },
         @{ lines = @('[model]', $endpoint, 'deployment = ""', $apiKey); pattern = '*Set deployment under `[model`]*' },
-        @{ lines = @('[model]', $endpoint, $deployment, 'auth = key', $apiKey); pattern = "*Line 4: unknown setting 'auth' in ``[model``]. Use endpoint, deployment, api_key.*" },
+        @{ lines = @('[model]', $endpoint, $deployment, 'auth = key', $apiKey); pattern = "*Line 4: unknown setting 'auth' in ``[model``]. Use endpoint, deployment, api_key, api_key_help.*" },
         @{ lines = @('[azure]', 'tenant = contoso.onmicrosoft.com'); pattern = '*Line 1: unknown section `[azure`]. Use `[model`].*' },
         @{ lines = @($endpoint); pattern = '*Line 1: endpoint must follow a section header*' },
         @{ lines = @('[model]', $endpoint, $endpoint); pattern = "*Line 3: 'endpoint' is set more than once*" },

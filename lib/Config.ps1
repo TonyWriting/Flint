@@ -36,7 +36,7 @@ function Get-FlintDefaultConfigPath { return Join-Path (Split-Path $PSScriptRoot
 
 function Get-FlintConfigSchema {
     # Every accepted section and setting; anything else in the file is reported as an error.
-    return @{ model = @('endpoint', 'deployment', 'api_key') }
+    return @{ model = @('endpoint', 'deployment', 'api_key', 'api_key_help') }
 }
 
 function Read-FlintIniFile {
@@ -74,27 +74,38 @@ function Read-FlintIniFile {
     return $values
 }
 
-function Read-FlintConfig {
-    param([string]$ConfigFile)
-    if ([string]::IsNullOrWhiteSpace($ConfigFile)) { $ConfigFile = Get-FlintDefaultConfigPath }
-    if (-not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) {
-        $templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'flint.example.ini'
-        throw ("Configuration file not found: '{0}'. Copy the template '{1}' to this path, set endpoint, deployment and api_key under [model], then run Flint again." -f $ConfigFile, $templatePath)
+function ConvertTo-FlintModelConfig {
+    param([hashtable]$Values, [switch]$WithoutKey)
+    # Shared by flint.ini and team setup templates; a template leaves the key to each user.
+    $required = @('endpoint', 'deployment')
+    if (-not $WithoutKey) { $required += 'api_key' }
+    foreach ($name in $required) {
+        if ([string]::IsNullOrWhiteSpace($Values['model.' + $name])) { throw ('Set ' + $name + ' under [model].') }
     }
-    if ((Get-Item -LiteralPath $ConfigFile -Force -ErrorAction Stop).PSProvider.Name -ne 'FileSystem') {
-        throw 'ConfigFile must point to a filesystem file.'
-    }
-    $configPath = (Resolve-Path -LiteralPath $ConfigFile -ErrorAction Stop).ProviderPath
-    try { $values = Read-FlintIniFile $configPath (Get-FlintConfigSchema) }
-    catch { throw ("Invalid configuration file '{0}'. {1}" -f $configPath, $_.Exception.Message) }
-    foreach ($name in @('endpoint', 'deployment', 'api_key')) {
-        if ([string]::IsNullOrWhiteSpace($values['model.' + $name])) { throw ("Set {0} under [model] in '{1}'." -f $name, $configPath) }
-    }
-    $apiEndpoint = $values['model.endpoint']
+    $apiEndpoint = $Values['model.endpoint']
     $apiUri = $apiEndpoint -as [uri]
     if (-not $apiUri -or -not $apiUri.IsAbsoluteUri -or $apiUri.Scheme -ne 'https' -or
         -not $apiUri.Host -or $apiUri.UserInfo -or $apiUri.Query -or $apiUri.Fragment -or $apiUri.AbsolutePath -cne '/openai/v1/responses') {
         throw 'endpoint under [model] must be a complete HTTPS URL ending in /openai/v1/responses, without credentials, query or fragment.'
     }
-    return @{ ConfigPath = $configPath; ApiEndpoint = $apiEndpoint; Model = $values['model.deployment']; ApiKey = $values['model.api_key'] }
+    $help = [string]$Values['model.api_key_help']
+    if ($help.Length -gt 400) { throw 'api_key_help under [model] is limited to 400 characters.' }
+    return @{ ApiEndpoint = $apiEndpoint; Model = $Values['model.deployment']; ApiKey = [string]$Values['model.api_key']; ApiKeyHelp = $help }
+}
+
+function Read-FlintConfig {
+    param([string]$ConfigFile)
+    if ([string]::IsNullOrWhiteSpace($ConfigFile)) { $ConfigFile = Get-FlintDefaultConfigPath }
+    if (-not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) {
+        $templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'flint.example.ini'
+        throw ("Configuration file not found: '{0}'. Run agent.ps1 -Setup with the setup folder your team provides, or copy the template '{1}' to this path and set endpoint, deployment and api_key under [model]." -f $ConfigFile, $templatePath)
+    }
+    if ((Get-Item -LiteralPath $ConfigFile -Force -ErrorAction Stop).PSProvider.Name -ne 'FileSystem') {
+        throw 'ConfigFile must point to a filesystem file.'
+    }
+    $configPath = (Resolve-Path -LiteralPath $ConfigFile -ErrorAction Stop).ProviderPath
+    try { $config = ConvertTo-FlintModelConfig (Read-FlintIniFile $configPath (Get-FlintConfigSchema)) }
+    catch { throw ("Invalid configuration file '{0}'. {1}" -f $configPath, $_.Exception.Message) }
+    $config.ConfigPath = $configPath
+    return $config
 }

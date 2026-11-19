@@ -141,7 +141,7 @@ function Read-FlintPlugins {
         try {
             if ($child.Attributes -band 1024) { throw 'Plugin directories cannot be symlinks or junctions.' }
             $plugin = Test-FlintPlugin $child.FullName
-            if ($plugin.name -cne $child.Name) { throw ("The directory name must match the plugin name '" + $plugin.name + "'. Reinstall it with -InstallPlugin.") }
+            if ($plugin.name -cne $child.Name) { throw ("The directory name must match the plugin name '" + $plugin.name + "'. Run agent.ps1 -Setup again.") }
             $plugin.source = Read-FlintPluginSource $Directory $plugin.name
             $result.loaded += $plugin
         } catch { $result.errors += @{ name = $child.Name; message = $_.Exception.Message } }

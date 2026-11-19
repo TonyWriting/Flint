@@ -98,6 +98,18 @@ function New-TestPlugin {
     return $Path
 }
 
+function New-TestSetup {
+    param([string]$Path, [string[]]$Template, [string[]]$Plugins = @('example'))
+    # A fictional team setup folder: a flint.ini template without a key and Plugins\<name> folders.
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    if ($null -eq $Template) {
+        $Template = @('[model]', 'endpoint = https://contoso.services.ai.azure.com/openai/v1/responses', 'deployment = team-model', 'api_key_help = Ask the team for the key.')
+    }
+    Set-Content -LiteralPath (Join-Path $Path 'flint.ini') -Encoding UTF8 -Value $Template
+    foreach ($name in $Plugins) { $null = New-TestPlugin (Join-Path $Path ('Plugins\' + $name)) -Name $name }
+    return $Path
+}
+
 function Remove-TestFixture {
     $resolved = (Resolve-Path -LiteralPath $script:TestRoot).ProviderPath
     if ($resolved -ne $script:TestRoot -or (Split-Path $resolved -Parent) -ne $script:TestParent) {

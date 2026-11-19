@@ -103,35 +103,40 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
         Assert-True (-not (Test-Path -LiteralPath $rejectedLogs)) 'Reject an invalid runtime or configuration before starting a session or making model requests.'
         Assert-True (-not $startupMessage.Contains('test-api-key')) 'Do not expose credentials in startup validation errors.'
         if ($case.missing) {
-            foreach ($part in @('Copy the template', 'flint.example.ini', 'endpoint, deployment and api_key under [model]')) {
+            foreach ($part in @('agent.ps1 -Setup', 'copy the template', 'flint.example.ini', 'endpoint, deployment and api_key under [model]')) {
                 Assert-True ($startupMessage.Contains($part)) ('Missing startup guidance: ' + $part + '. Received: ' + $startupMessage)
             }
             Assert-True (-not (Test-Path -LiteralPath $case.path)) 'Leave creation of the missing configuration to the user.'
         }
     }
 
-    # Plugin maintenance runs without a model configuration and installs into the runtime that was invoked.
-    $pluginLauncher = Join-Path $TestRoot 'plugin-launch.ps1'
-    Set-Content -LiteralPath $pluginLauncher -Encoding ASCII -Value @(
-        'param($CliPath, $Validate, $Install)'
+    # Setup runs without a configuration, reads the key from input and installs into the runtime that was invoked.
+    $setupLauncher = Join-Path $TestRoot 'setup-launch.ps1'
+    Set-Content -LiteralPath $setupLauncher -Encoding ASCII -Value @(
+        'param($CliPath, $Validate, $Setup, $ConfigPath)'
         'if ($ExecutionContext.SessionState.LanguageMode -ne ''ConstrainedLanguage'') { $ExecutionContext.SessionState.LanguageMode = ''ConstrainedLanguage'' }'
-        'if ($Validate) { & $CliPath -ValidatePlugin $Validate } else { & $CliPath -InstallPlugin $Install }'
+        'if ($Validate) { & $CliPath -ValidateSetup $Validate } else { & $CliPath -Setup $Setup -ConfigFile $ConfigPath }'
         'if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }'
     )
-    $pluginSource = New-TestPlugin (Join-Path $TestRoot 'plugin-source\example')
-    $invalidPlugin = New-TestPlugin (Join-Path $TestRoot 'plugin-source\invalid') -Manifest @{ version = 'one' }
-    $output = & $powerShell -NoProfile -NonInteractive -File $pluginLauncher -CliPath $cliPath -Validate $pluginSource
-    Assert-True ($LASTEXITCODE -eq 0 -and ($output -join "`n").Contains('The plugin is valid.') -and ($output -join "`n").Contains('example 1.0.0')) 'Validate a plugin folder from the entry point.'
+    $setupSource = New-TestSetup (Join-Path $TestRoot 'setup-source')
+    $invalidSetup = New-TestSetup (Join-Path $TestRoot 'setup-invalid') -Plugins @()
+    $null = New-TestPlugin (Join-Path $invalidSetup 'Plugins\example') -Manifest @{ version = 'one' }
+    $output = & $powerShell -NoProfile -NonInteractive -File $setupLauncher -CliPath $cliPath -Validate $setupSource
+    $transcript = $output -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('The setup is valid.') -and $transcript.Contains('Model: team-model at https://contoso.services.ai.azure.com/openai/v1/responses') -and $transcript.Contains('example 1.0.0')) 'Validate a setup folder from the entry point.'
     try {
         $ErrorActionPreference = 'Continue'
-        $output = & $powerShell -NoProfile -NonInteractive -File $pluginLauncher -CliPath $cliPath -Validate $invalidPlugin 2>&1
+        $output = & $powerShell -NoProfile -NonInteractive -File $setupLauncher -CliPath $cliPath -Validate $invalidSetup 2>&1
         $validateExitCode = $LASTEXITCODE
     } finally { $ErrorActionPreference = 'Stop' }
-    Assert-True ($validateExitCode -eq 1 -and ($output -join "`n").Contains('MAJOR.MINOR.PATCH')) 'Explain why a plugin is invalid and exit with failure.'
-    $output = & $powerShell -NoProfile -NonInteractive -File $pluginLauncher -CliPath $cliPath -Install $pluginSource
+    Assert-True ($validateExitCode -eq 1 -and ($output -join "`n").Contains('MAJOR.MINOR.PATCH')) 'Explain why a setup is invalid and exit with failure.'
+    $setupConfig = Join-Path $TestRoot 'setup-flint.ini'
+    $output = @('pasted-team-key') | & $powerShell -NoProfile -File $setupLauncher -CliPath $cliPath -Setup $setupSource -ConfigPath $setupConfig
+    $transcript = $output -join "`n"
     $runtimePlugin = Join-Path (Split-Path $cliPath -Parent) 'plugins\example\plugin.json'
-    Assert-True ($LASTEXITCODE -eq 0 -and ($output -join "`n").Contains('Installed plugin example 1.0.0') -and (Test-Path -LiteralPath $runtimePlugin)) 'Install a plugin into the invoked runtime.'
-    Assert-True (($output -join "`n") -match 'Validated example 1\.0\.0: 5 files, 2 reviewed reads \(\d+\.\ds\)' -and ($output -join "`n").Contains('Installed to ')) 'Report each install step with its duration.'
+    Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('Setup complete.') -and (Test-Path -LiteralPath $runtimePlugin)) ('Set up the invoked runtime from a team folder: ' + $transcript)
+    Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript -match 'Installed example 1\.0\.0 \(\d+\.\ds\)' -and $transcript.Contains('Wrote ' + $setupConfig)) 'Show where to get the key and report each step with its duration.'
+    Assert-True ((Read-FlintConfig $setupConfig).ApiKey -ceq 'pasted-team-key') 'Write the key read from input to flint.ini.'
     $statusLogs = Join-Path $TestRoot 'plugin-logs'
     $output = @('/status', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $statusLogs
     $transcript = $output -join "`n"

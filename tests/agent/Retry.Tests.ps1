@@ -47,6 +47,13 @@ try {
         Assert-Throws { Invoke-AgentResponse $Session @{ input = 'test' } } '*Azure OpenAI request failed*'
         Assert-True ($Requests.Count -eq 1 -and $Waits.Count -eq 0) 'Fail immediately for permanent, ambiguous, or unclassified errors.'
     }
+    $Session.ApiKeyHelp = 'Get the current key from the team vault.'
+    foreach ($case in @(@{ status = 401; help = $true }, @{ status = 403; help = $false })) {
+        $script:Failures = @($case.status); $message = ''
+        try { $null = Invoke-AgentResponse $Session @{ input = 'test' } } catch { $message = $_.Exception.Message }
+        Assert-True (($message -like '*Get the current key from the team vault.') -eq $case.help) 'Point to the key help only when the service rejects the key.'
+    }
+    $Session.ApiKeyHelp = ''
     $script:Requests = @(); $script:Waits = @(); $script:Failures = @(503, 503, 503, 503)
     Assert-Throws { Invoke-AgentResponse $Session @{ input = 'test' } } '*HTTP 503*'
     Assert-True ($Requests.Count -eq 4 -and ($Waits -join ',') -eq '1,2,4') 'Stop after the initial request and three retries.'

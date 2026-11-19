@@ -42,7 +42,7 @@ function New-AgentSession {
     $session = @{
         Id = $id; Started = $started; Root = $root.FullName
         Model = $config.Model; Effort = $Effort
-        ApiKey = $config.ApiKey; ApiEndpoint = $config.ApiEndpoint
+        ApiKey = $config.ApiKey; ApiKeyHelp = $config.ApiKeyHelp; ApiEndpoint = $config.ApiEndpoint
         History = @(); Tools = @(Get-AgentTools); Instructions = Get-FlintInstructions -Plugins @($plugins.loaded)
         TrajectoryPath = $logPath; EventSequence = $sequence; LogFailed = $false
         ConfigPath = $config.ConfigPath; EntryPath = Join-Path $installRoot 'agent.ps1'

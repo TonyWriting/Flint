@@ -20,8 +20,8 @@
 | `tools/Commands.ps1`、`tools/permissions/` | kubectl 执行、受保护资源的修改约束及已审核的标准 Kubernetes 只读规则。 |
 | `tools/azure/` | Azure 认证、授权、ARM 和 Key Vault 协议实现。 |
 | `tools/Worker.ps1` | 工具子进程入口，校验请求并分派到具体工具实现。 |
-| `lib/Plugins.ps1`、`lib/PluginInstall.ps1` | 插件的校验与加载；从 Azure DevOps、本地文件夹或 zip 安装插件。 |
-| `docs/` | 专题文档：[[docs/ToolPermissions|工具调用与权限]]、[[docs/Plugins|插件]]，以及 [[docs/examples/Markdown|Markdown 渲染示例]]。 |
+| `lib/Plugins.ps1`、`lib/Setup.ps1` | 插件的校验与加载；团队配置文件夹的校验，以及从 Azure DevOps、本地文件夹或 zip 生成 `flint.ini`、同步插件。 |
+| `docs/` | 专题文档：[[docs/ToolPermissions|工具调用与权限]]、[[docs/Setup|团队配置]]、[[docs/Plugins|插件]]，以及 [[docs/examples/Markdown|Markdown 渲染示例]]。 |
 | `tests/` | 离线测试，目录与代码对应，结构见 [[#验证|验证]]。 |
 | `flint.ini`、`.flint/`、`plugins/` | 本地配置、运行数据和已安装的插件，由 Git 忽略；根目录保留 `flint.example.ini` 模板。 |
 
@@ -40,7 +40,13 @@ Azure 专用模块按以下职责加载：
 
 ## 启动
 
-将项目中的 [flint.example.ini](flint.example.ini) 复制为同目录的 `flint.ini`，在 `[model]` 下填写 Foundry 的 endpoint、部署名和 API key：
+Flint 从同目录的 `flint.ini` 读取模型配置。团队提供了[[docs/Setup|配置文件夹]]时，运行一次 `-Setup`，Flint 会生成 `flint.ini` 并装好团队的插件，你只需粘贴 API key：
+
+```powershell
+powershell.exe -NoProfile -File .\agent.ps1 -Setup '<team setup folder URL>'
+```
+
+没有团队配置时，将项目中的 [flint.example.ini](flint.example.ini) 复制为同目录的 `flint.ini`，在 `[model]` 下填写 Foundry 的 endpoint、部署名和 API key：
 
 ```ini
 [model]
@@ -49,7 +55,7 @@ deployment = <your-deployment>
 api_key = <your-key>
 ```
 
-Endpoint 必须是完整 HTTPS 地址，以 `/openai/v1/responses` 结尾，不含凭据、查询参数、fragment 或结尾斜杠。`flint.ini` 必须存在，可用 `-ConfigFile` 指定其他文件。注释单独成行，以 `;` 或 `#` 开头；值从等号后取到行尾，可以用一对引号括起。Flint 只读取这个文件，不读环境变量；遇到未知的节或设置、重复的设置、缺少必填项时停止启动，并指出所在行，报错中不会出现设置的值。API key 放在 `Authorization: Bearer` 中发送，只在内存和模型 worker 的环境变量中传递，不写入轨迹，输出中出现时会被脱敏。
+Endpoint 必须是完整 HTTPS 地址，以 `/openai/v1/responses` 结尾，不含凭据、查询参数、fragment 或结尾斜杠。可选的 `api_key_help` 写明去哪里取新 key，模型拒绝 key（HTTP 401）时显示在错误信息中。`flint.ini` 必须存在，可用 `-ConfigFile` 指定其他文件。注释单独成行，以 `;` 或 `#` 开头；值从等号后取到行尾，可以用一对引号括起。Flint 只读取这个文件，不读环境变量；遇到未知的节或设置、重复的设置、缺少必填项时停止启动，并指出所在行，报错中不会出现设置的值。API key 放在 `Authorization: Bearer` 中发送，只在内存和模型 worker 的环境变量中传递，不写入轨迹，输出中出现时会被脱敏。
 
 **启动时的当前目录就是工作目录**。以下示例在项目目录执行；从其他目录启动时，将 `$flint` 改为指向 `agent.ps1` 的相对路径：
 
@@ -72,14 +78,14 @@ powershell.exe -NoProfile -File $flint -Resume '<session-id>'
 
 标准资源的读取按 [kubectl.json](tools/permissions/kubectl.json) 自动执行并参与并行调度，包括 Pod、Event、Deployment 等的 `get`／`describe`，单个 Pod 最近日志的 `logs`（必须带 `--tail`，最多 1,000 行），以及用于发现 context 和核对资源结构的 `config get-contexts`、`api-resources`、`explain`。标签与字段筛选帮助缩小查询范围；未审核的资源或选项仍需审批。
 
-特定平台的自定义资源（CRD）由**插件**扩展。插件是一个只包含数据的文件夹，提供三样东西：这些资源的只读规则、需要受保护修改的资源名单，以及一份让模型理解平台、知道怎么查的操作指南。插件安装在 Flint 目录的 `plugins/` 下，新会话启动时加载；插件内容由用户维护在自己的仓库中，不进入 Flint 仓库。
+特定平台的自定义资源（CRD）由**插件**扩展。插件是一个只包含数据的文件夹，提供三样东西：这些资源的只读规则、需要受保护修改的资源名单，以及一份让模型理解平台、知道怎么查的操作指南。插件放在团队[[docs/Setup|配置文件夹]]的 `Plugins/` 下，由 `-Setup` 安装到 Flint 目录的 `plugins/`，新会话启动时加载；插件内容由团队维护在自己的仓库中，不进入 Flint 仓库。
 
 ```powershell
-# Install from an Azure DevOps folder URL, a local folder or a .zip file.
-powershell.exe -NoProfile -File .\agent.ps1 -InstallPlugin 'https://dev.azure.com/<organization>/<project>/_git/<repository>?path=/<plugin folder>'
+# Set up from a team folder: an Azure DevOps folder URL, a local folder or a .zip file.
+powershell.exe -NoProfile -File .\agent.ps1 -Setup 'https://dev.azure.com/<organization>/<project>/_git/<repository>?path=/<setup folder>'
 
-# Check a plugin folder before publishing it.
-powershell.exe -NoProfile -File .\agent.ps1 -ValidatePlugin .\path\to\plugin
+# Check a setup folder, including its plugins, before publishing it.
+powershell.exe -NoProfile -File .\agent.ps1 -ValidateSetup .\path\to\setup
 ```
 
 插件声明的**受保护资源**由控制器根据 `spec` 持续调谐，修改它们必须使用明确命名的 `patch`：指定 `--type=json` 和内联 `--patch`，第一项测试刚读取的 `/metadata/resourceVersion`，后续只允许操作 `/spec/` 下的字段。审批展示目标、参数和模型提供的变更说明。写入按顺序执行且不自动重试；返回 `verification_required` 提醒继续检查控制器反馈和实际状态。交互式 `kubectl edit` 不可用。插件格式、校验规则和维护方法见 [[docs/Plugins|插件]]。
@@ -297,7 +303,7 @@ powershell.exe -NoProfile -File .\tests\previews\Preview.Exit.ps1
 | `cli/` | `agent.ps1` 入口、恢复会话、终端显示与 Markdown 渲染 |
 | `tools/files/` | 文件读写、分页读取、搜索、保存结果、路径保护 |
 | `tools/kubectl/` | kubectl 执行、只读规则与 session 授权、受保护资源的修改约束 |
-| `plugins/` | 插件校验、加载、合并规则、从目录／zip／Azure DevOps 安装、恢复会话时的插件变化（`lib/Plugins.ps1`、`PluginInstall.ps1`） |
+| `plugins/` | 插件校验、加载、合并规则，团队配置的校验与 `-Setup`（目录／zip／Azure DevOps），恢复会话时的插件变化（`lib/Plugins.ps1`、`Setup.ps1`） |
 | `tools/azure/` | Azure 认证来源、ARM 请求与审批、异步操作、Key Vault、Azure worker |
 | `previews/` | 手动运行的离线终端预览，不属于自动测试 |
 

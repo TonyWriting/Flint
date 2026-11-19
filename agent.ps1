@@ -14,8 +14,8 @@ param(
     [ValidateRange(0, 2000000)][int]$ContextWindow = 0,
     [string]$TrajectoryDirectory,
     [switch]$NoAzure,
-    [string]$InstallPlugin,
-    [string]$ValidatePlugin
+    [string]$Setup,
+    [string]$ValidateSetup
 )
 
 if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
@@ -31,26 +31,25 @@ if (-not $ConfigFile) { $ConfigFile = Join-Path $PSScriptRoot 'flint.ini' }
 foreach ($component in @('Http', 'KeyVault', 'Auth', 'Controller')) {
     . (Join-Path $PSScriptRoot ('tools\azure\' + $component + '.ps1'))
 }
-foreach ($component in @('Security', 'Telemetry', 'Config', 'Plugins', 'PluginInstall', 'Sessions', 'Markdown', 'Console', 'Ui', 'Runtime', 'Permissions', 'Results', 'WorkerTransport', 'ToolExecution', 'Parallel', 'Context', 'Client', 'Loop')) {
+foreach ($component in @('Security', 'Telemetry', 'Config', 'Plugins', 'Setup', 'Sessions', 'Markdown', 'Console', 'Ui', 'Runtime', 'Permissions', 'Results', 'WorkerTransport', 'ToolExecution', 'Parallel', 'Context', 'Client', 'Loop')) {
     . (Join-Path $PSScriptRoot ('lib\' + $component + '.ps1'))
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
     $ErrorActionPreference = 'Stop'
-    # Plugin maintenance runs without a configuration file or a conversation.
-    if ($InstallPlugin -or $ValidatePlugin) {
+    # Setup runs before any configuration exists and never starts a conversation.
+    if ($Setup -or $ValidateSetup) {
         try {
-            if ($InstallPlugin -and $ValidatePlugin) { throw 'Use either -InstallPlugin or -ValidatePlugin.' }
-            if ($ValidatePlugin) {
-                $plugin = Test-FlintPlugin $ValidatePlugin
-                Write-Host 'The plugin is valid.' -ForegroundColor Green
-                Show-FlintPluginSummary $plugin
+            if ($Setup -and $ValidateSetup) { throw 'Use either -Setup or -ValidateSetup.' }
+            if ($ValidateSetup) {
+                $checked = Test-FlintSetup $ValidateSetup
+                Write-Host 'The setup is valid.' -ForegroundColor Green
+                Show-FlintSetupSummary $checked
+                foreach ($plugin in @($checked.plugins)) { Show-FlintPluginSummary $plugin }
             } else {
-                # Install steps already report validation and placement; finish with the outcome only.
-                $installed = Install-FlintPlugin $InstallPlugin
-                $message = 'Installed plugin ' + $installed.plugin.name + ' ' + $installed.plugin.version
-                if ($installed.previous_version) { $message += ', replacing ' + $installed.previous_version }
-                Write-Host ($message + '. New Flint sessions will load it.') -ForegroundColor Green
+                # Each step already reported its outcome; finish with what to do next.
+                $null = Install-FlintSetup $Setup $ConfigFile
+                Write-Host 'Setup complete. Start Flint with .\agent.ps1' -ForegroundColor Green
             }
             exit 0
         } catch {
