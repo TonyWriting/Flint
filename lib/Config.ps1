@@ -100,9 +100,6 @@ function Read-FlintConfig {
         $templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'flint.example.ini'
         throw ("Configuration file not found: '{0}'. Run agent.ps1 -Setup with the setup folder your team provides, or copy the template '{1}' to this path and set endpoint, deployment and api_key under [model]." -f $ConfigFile, $templatePath)
     }
-    if ((Get-Item -LiteralPath $ConfigFile -Force -ErrorAction Stop).PSProvider.Name -ne 'FileSystem') {
-        throw 'ConfigFile must point to a filesystem file.'
-    }
     $configPath = (Resolve-Path -LiteralPath $ConfigFile -ErrorAction Stop).ProviderPath
     try { $config = ConvertTo-FlintModelConfig (Read-FlintIniFile $configPath (Get-FlintConfigSchema)) }
     catch { throw ("Invalid configuration file '{0}'. {1}" -f $configPath, $_.Exception.Message) }

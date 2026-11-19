@@ -265,20 +265,6 @@ function Format-FlintIniValue {
     return $Value
 }
 
-function Resolve-FlintSetupConfigPath {
-    param([string]$Path)
-    # Checked before anything changes: a bare file name is relative to the current folder, the folder must exist,
-    # and the path must not be a folder itself.
-    if (Test-Path -LiteralPath $Path -PathType Container) { throw ("ConfigFile must name a file, but '" + $Path + "' is a folder.") }
-    $parent = Split-Path $Path -Parent
-    if (-not $parent) { $parent = '.' }
-    $folder = Get-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
-    if (-not $folder -or -not $folder.PSIsContainer -or $folder.PSProvider.Name -ne 'FileSystem') {
-        throw ("The folder for ConfigFile does not exist: '" + $parent + "'. Create it or choose another path.")
-    }
-    return Join-Path $folder.FullName (Split-Path $Path -Leaf)
-}
-
 function Save-FlintStagedConfig {
     param([string]$Path, [string]$Source, $Model, [string]$ApiKey)
     $lines = @(
@@ -349,7 +335,8 @@ function Sync-FlintPlugins {
     foreach ($plugin in @($Plugins)) {
         $started = [datetime]::UtcNow
         $path = $null
-        if ($Source.repo_path) { $path = $Source.repo_path + '/Plugins/' + $plugin.name }
+        # Git paths are case-sensitive, so the record keeps the folder names as the repository spells them.
+        if ($Source.repo_path) { $path = $Source.repo_path + '/' + (Split-Path (Split-Path $plugin.root -Parent) -Leaf) + '/' + (Split-Path $plugin.root -Leaf) }
         $record = [ordered]@{
             version = 1; name = $plugin.name; plugin_version = $plugin.version; source = $Source.display; kind = $Source.kind
             ref = $Source.ref; path = $path; commit = $Commit; installed_at = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
@@ -381,7 +368,6 @@ function Install-FlintSetup {
     param([string]$Source, [string]$ConfigFile, [string]$PluginDirectory)
     if (-not $ConfigFile) { $ConfigFile = Get-FlintDefaultConfigPath }
     if (-not $PluginDirectory) { $PluginDirectory = Get-FlintPluginDirectory }
-    $ConfigFile = Resolve-FlintSetupConfigPath $ConfigFile
     $parsed = ConvertFrom-FlintSetupSource $Source
     $workParent = (Get-Item -LiteralPath $env:TEMP -Force).FullName.TrimEnd('\')
     $work = Join-Path $workParent ('flint-setup-' + [guid]::NewGuid().ToString('N'))
@@ -410,7 +396,7 @@ function Install-FlintSetup {
         # Validate everything before asking for the key, and keep the current key when the user presses Enter.
         $current = ''
         if (Test-Path -LiteralPath $ConfigFile -PathType Leaf) {
-            try { $current = [string](Read-FlintIniFile $ConfigFile (Get-FlintConfigSchema))['model.api_key'] } catch { $current = '' }
+            try { $current = ([string](Read-FlintIniFile $ConfigFile (Get-FlintConfigSchema))['model.api_key']).Trim() } catch { $current = '' }
         }
         if ($setup.model.ApiKeyHelp) { Write-Host $setup.model.ApiKeyHelp -ForegroundColor Yellow }
         try { $key = [string](Read-FlintSetupApiKey ([bool]$current)) }

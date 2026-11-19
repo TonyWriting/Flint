@@ -156,15 +156,6 @@ function Show-FlintError {
     Write-Host (Protect-FlintText $Session ('Error: ' + $Message)) -ForegroundColor Red
 }
 
-function Get-FlintStartCommand {
-    param([string]$EntryPath, [string]$ConfigPath)
-    # The default flint.ini sits next to agent.ps1; any other configuration has to be named on the command line.
-    $command = "& '" + $EntryPath.Replace("'", "''") + "'"
-    $defaultConfig = Join-Path (Split-Path $EntryPath -Parent) 'flint.ini'
-    if ($ConfigPath -and $ConfigPath -ine $defaultConfig) { $command += " -ConfigFile '" + $ConfigPath.Replace("'", "''") + "'" }
-    return $command
-}
-
 function Show-FlintExit {
     param([hashtable]$Session)
     Clear-FlintProgress $Session
@@ -183,7 +174,7 @@ function Show-FlintExit {
         Write-Host 'The latest conversation could not be saved for continuation.' -ForegroundColor Yellow
         return
     }
-    $command = (Get-FlintStartCommand $Session.EntryPath $Session.ConfigPath) + ' -Resume ' + $Session.Id
+    $command = "& '" + $Session.EntryPath.Replace("'", "''") + "' -Resume " + $Session.Id
     if ($Session.NoAzure) { $command += ' -NoAzure' }
     $directory = Split-Path $Session.TrajectoryPath -Parent
     if ($directory -ine (Join-Path $Session.Root '.flint\trajectories')) { $command += " -TrajectoryDirectory '" + $directory.Replace("'", "''") + "'" }

@@ -3,6 +3,7 @@ param([switch]$ResumeSaved, [int]$ContextWindow = 128000)
 $previewContextWindow = $ContextWindow
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'TestSupport.ps1')
 $app = New-TestRuntime (Join-Path $TestRoot 'app')
+Copy-Item -LiteralPath $config -Destination (Join-Path $app 'flint.ini')
 # Keep the entry point, input reader and model worker; stub only the network boundary.
 Add-Content -LiteralPath (Join-Path $app 'lib\Client.ps1') -Encoding UTF8 -Value @'
 function Invoke-RestMethod {
@@ -25,7 +26,7 @@ if ($ResumeSaved) {
     Write-Host ('Offline resume test. Verify the saved conversation, then press Ctrl+C. The exit ID must stay ' + $resumeId + '.') -ForegroundColor DarkGray
 } else { Write-Host 'Offline console test. Enter a message, then press Ctrl+C after the answer. No network requests are made.' -ForegroundColor DarkGray }
 Push-Location -LiteralPath $WorkRoot
-try { & (Join-Path $app 'agent.ps1') -NoAzure -ConfigFile $config -Resume $resumeId -ContextWindow $previewContextWindow }
+try { & (Join-Path $app 'agent.ps1') -NoAzure -Resume $resumeId -ContextWindow $previewContextWindow }
 finally {
     try {
         $log = Get-ChildItem -LiteralPath (Join-Path $WorkRoot '.flint\trajectories') -Filter *.jsonl | Sort-Object LastWriteTime -Descending | Select-Object -First 1

@@ -114,18 +114,12 @@ try {
     $script:KeyInput = 'long-key'
     Assert-Throws { Install-FlintSetup $source (Join-Path $TestRoot 'long.ini') $longParent } '*longer than 240 characters*'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $TestRoot 'long.ini')) -and @(Get-ChildItem -LiteralPath $TestRoot -Filter '.flint-*' -Force).Count -eq 0) 'A failed plugin sync leaves flint.ini unchanged and removes the staged copy.'
-
-    # ConfigFile is checked before the key prompt and before any change; a bare file name is relative to the current folder.
-    $untouched = Join-Path $TestRoot 'untouched-plugins'
-    $script:KeyPrompts = @()
-    Assert-Throws { Install-FlintSetup $source $configDirectory $untouched } '*ConfigFile must name a file*is a folder*'
-    Assert-Throws { Install-FlintSetup $source (Join-Path $TestRoot 'missing\flint.ini') $untouched } '*folder for ConfigFile does not exist*'
-    Assert-True ($KeyPrompts.Count -eq 0 -and -not (Test-Path -LiteralPath $untouched)) 'Reject a folder or a missing parent before asking for the key or changing plugins.'
-    $script:KeyInput = 'relative-key'
-    Push-Location $configDirectory
-    try { $result = Install-FlintSetup $source 'team.ini' (Join-Path $TestRoot 'relative-plugins') } finally { Pop-Location }
-    $expected = Join-Path $configDirectory 'team.ini'
-    Assert-True ($result.config -ieq $expected -and (Read-TestConfig $expected)['model.api_key'] -ceq 'relative-key') 'Write a bare file name to the current folder and return its full path.'
+    $blankConfig = Join-Path $TestRoot 'blank.ini'
+    Set-Content -LiteralPath $blankConfig -Encoding UTF8 -Value @('[model]', $endpoint, 'deployment = team-model', 'api_key = "   "')
+    $blankPlugins = Join-Path $TestRoot 'blank-plugins'
+    $script:KeyInput = ''; $script:KeyPrompts = @()
+    Assert-Throws { Install-FlintSetup $source $blankConfig $blankPlugins } '*An API key is required*'
+    Assert-True (-not $KeyPrompts[0] -and -not (Test-Path -LiteralPath $blankPlugins)) 'A blank current key is not offered and cannot be kept.'
 
     # Archives from the Azure DevOps download button contain one top-level folder; flint.ini at the root also works.
     $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
@@ -151,6 +145,10 @@ try {
     $bin = Join-Path $TestRoot 'bin'
     New-Item -ItemType Directory -Path $bin | Out-Null
     Copy-Item -LiteralPath $source -Destination (Join-Path $bin 'remote-setup') -Recurse
+    # The repository spells the plugin folder with a capital letter; the record keeps that spelling.
+    $remotePlugin = Join-Path $bin 'remote-setup\Plugins\example'
+    Rename-Item -LiteralPath $remotePlugin -NewName 'renaming'
+    Rename-Item -LiteralPath (Join-Path $bin 'remote-setup\Plugins\renaming') -NewName 'Example'
     $code = Join-Path $TestRoot 'FakeGit.cs'
     Set-Content -LiteralPath $code -Encoding UTF8 -Value @'
 using System;
@@ -200,7 +198,7 @@ class FakeGit {
     $work = Split-Path (($calls[0] -split '\|')[-1]) -Parent
     Assert-True (-not (Test-Path -LiteralPath $work)) 'Remove the temporary clone after setup.'
     $record = ConvertFrom-Json (Get-Content -LiteralPath (Join-Path $gitRoot 'example.source.json') -Raw -Encoding UTF8)
-    Assert-True ($record.kind -ceq 'git' -and $record.ref -ceq 'main' -and $record.path -ceq 'team/flint/Plugins/example' -and $record.source -ceq 'https://dev.azure.com/contoso/Project/_git/Repo?path=/team/flint&version=GBmain') 'Record the repository, branch and plugin folder without credentials.'
+    Assert-True ($record.kind -ceq 'git' -and $record.ref -ceq 'main' -and $record.path -ceq 'team/flint/Plugins/Example' -and (@(Get-ChildItem -LiteralPath $gitRoot -Directory | ForEach-Object { $_.Name }) -ccontains 'example') -and $record.source -ceq 'https://dev.azure.com/contoso/Project/_git/Repo?path=/team/flint&version=GBmain') 'Record the repository, branch and plugin folder without credentials.'
     Assert-True ((Get-Content -LiteralPath $gitConfig -Encoding UTF8)[0] -like '*from https://dev.azure.com/contoso/Project/_git/Repo?path=/team/flint&version=GBmain.*') 'Name the setup source in flint.ini.'
     Assert-Throws { Install-FlintSetup 'https://dev.azure.com/contoso/Project/_git/Repo?path=/team/missing' $gitConfig $gitRoot } "*has no folder '/team/missing' on the default branch*"
     $message = ''

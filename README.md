@@ -55,7 +55,7 @@ deployment = <your-deployment>
 api_key = <your-key>
 ```
 
-Endpoint 必须是完整 HTTPS 地址，以 `/openai/v1/responses` 结尾，不含凭据、查询参数、fragment 或结尾斜杠。可选的 `api_key_help` 写明去哪里取新 key，模型拒绝 key（HTTP 401）时显示在错误信息中。`flint.ini` 必须存在，可用 `-ConfigFile` 指定其他文件。注释单独成行，以 `;` 或 `#` 开头；值从等号后取到行尾，可以用一对引号括起。Flint 只读取这个文件，不读环境变量；遇到未知的节或设置、重复的设置、缺少必填项时停止启动，并指出所在行，报错中不会出现设置的值。API key 放在 `Authorization: Bearer` 中发送，只在内存和模型 worker 的环境变量中传递，不写入轨迹，输出中出现时会被脱敏。
+Endpoint 必须是完整 HTTPS 地址，以 `/openai/v1/responses` 结尾，不含凭据、查询参数、fragment 或结尾斜杠。可选的 `api_key_help` 写明去哪里取新 key，模型拒绝 key（HTTP 401）时显示在错误信息中。`flint.ini` 固定放在 `agent.ps1` 所在目录，必须存在。注释单独成行，以 `;` 或 `#` 开头；值从等号后取到行尾，可以用一对引号括起。Flint 只读取这个文件，不读环境变量；遇到未知的节或设置、重复的设置、缺少必填项时停止启动，并指出所在行，报错中不会出现设置的值。API key 放在 `Authorization: Bearer` 中发送，只在内存和模型 worker 的环境变量中传递，不写入轨迹，输出中出现时会被脱敏。
 
 **启动时的当前目录就是工作目录**。以下示例在项目目录执行；从其他目录启动时，将 `$flint` 改为指向 `agent.ps1` 的相对路径：
 

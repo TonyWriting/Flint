@@ -2,7 +2,6 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Prompt,
-    [string]$ConfigFile,
     [string]$Resume,
     [ValidateSet('none', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
     [ValidateRange(1, 1000)][int]$MaxTurns = 20,
@@ -22,7 +21,6 @@ if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -n
     throw ('Flint requires Windows PowerShell 5.1. Current version: {0}. Start Flint with powershell.exe -NoProfile -File "{1}".' -f $PSVersionTable.PSVersion, $PSCommandPath)
 }
 
-if (-not $ConfigFile) { $ConfigFile = Join-Path $PSScriptRoot 'flint.ini' }
 . (Join-Path $PSScriptRoot 'tools\Registry.ps1')
 . (Join-Path $PSScriptRoot 'tools\Commands.ps1')
 . (Join-Path $PSScriptRoot 'tools\Files.ps1')
@@ -48,9 +46,9 @@ if ($MyInvocation.InvocationName -ne '.') {
                 foreach ($plugin in @($checked.plugins)) { Show-FlintPluginSummary $plugin }
             } else {
                 # Each step already reported its outcome; finish with what to do next.
-                $installed = Install-FlintSetup $Setup $ConfigFile
+                $null = Install-FlintSetup $Setup
                 Write-Host 'Setup complete. Start Flint with:' -ForegroundColor Green
-                Write-Host ('  ' + (Get-FlintStartCommand $PSCommandPath $installed.config))
+                Write-Host ("  & '" + $PSCommandPath.Replace("'", "''") + "'")
             }
             exit 0
         } catch {
@@ -61,7 +59,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     $session = $null
     $exitReason = 'cancelled'
     try {
-        $session = New-AgentSession -ConfigFile $ConfigFile -Resume $Resume -Effort $ReasoningEffort `
+        $session = New-AgentSession -Resume $Resume -Effort $ReasoningEffort `
             -RequestTimeoutSec $RequestTimeoutSec -ToolTimeoutSec $ToolTimeoutSec `
             -MaxToolCalls $MaxToolCalls -MaxParallelTools $MaxParallelTools -MaxOutputTokens $MaxOutputTokens `
             -ContextWindow $ContextWindow -TrajectoryDirectory $TrajectoryDirectory `

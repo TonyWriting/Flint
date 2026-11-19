@@ -201,7 +201,7 @@ still ordinary text
     $script:Writes = @(); Show-FlintExit $Session
     $rendered = Get-UiText
     Assert-True ($rendered.Contains('total=1,290 input=1,234 (cached=1,000) output=56 (reasoning=20)')) 'Count cached input and reasoning output once in the exit total.'
-    Assert-True ($rendered.Contains('1 request(s) without reported usage') -and $rendered.Contains('-Resume ' + $Session.Id) -and $rendered.Contains('-ConfigFile')) 'Show partial usage honestly and print a runnable resume command with custom configuration.'
+    Assert-True ($rendered.Contains('1 request(s) without reported usage') -and $rendered.Contains("& '" + $Session.EntryPath + "' -Resume " + $Session.Id)) 'Show partial usage honestly and print a runnable resume command.'
     $Session.UsageReports = 0
     $script:Writes = @(); Show-FlintExit $Session
     Assert-True ((Get-UiText).Contains('Token usage: not reported') -and -not (Get-UiText).Contains('total=')) 'Never present missing API usage as measured zero tokens.'

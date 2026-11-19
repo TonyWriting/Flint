@@ -5,13 +5,19 @@ $ErrorActionPreference = 'Stop'
 $testParent = (Get-Item -LiteralPath $env:TEMP -Force).FullName.TrimEnd('\')
 $testRoot = Join-Path $testParent ('flint-exit-tests-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot | Out-Null
-$agentPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'agent.ps1'
+# The entry point reads flint.ini next to agent.ps1, so the test runs a copy of Flint.
+$repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$appRoot = Join-Path $testRoot 'app'
+New-Item -ItemType Directory -Path $appRoot | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRoot 'agent.ps1') -Destination $appRoot
+foreach ($directory in @('lib', 'tools')) { Copy-Item -LiteralPath (Join-Path $repoRoot $directory) -Destination $appRoot -Recurse }
+$agentPath = Join-Path $appRoot 'agent.ps1'
 $pidPath = Join-Path $testRoot 'pid.txt'
 Set-Content -LiteralPath (Join-Path $testRoot 'wait.ps1') -Encoding ASCII -Value @(
     'param($PidPath)'
     'Set-Content -LiteralPath $PidPath -Value $PID; Start-Sleep -Seconds 60'
 )
-Set-Content -LiteralPath (Join-Path $testRoot 'flint.ini') -Encoding ASCII -Value @(
+Set-Content -LiteralPath (Join-Path $appRoot 'flint.ini') -Encoding ASCII -Value @(
     '[model]'
     'endpoint = https://test.services.ai.azure.com/openai/v1/responses'
     'deployment = test-deployment'
@@ -57,8 +63,8 @@ function Read-Host {
     }
     Wait-ExitFixture
 }
-if ($During -in @('Model', 'Retry')) { & $AgentPath -NoAzure -ConfigFile (Join-Path $TestRoot 'flint.ini') -Prompt 'Wait for the model.' }
-else { & $AgentPath -NoAzure -ConfigFile (Join-Path $TestRoot 'flint.ini') }
+if ($During -in @('Model', 'Retry')) { & $AgentPath -NoAzure -Prompt 'Wait for the model.' }
+else { & $AgentPath -NoAzure }
 '@
     $null = $driver.AddScript($scriptText).AddArgument($agentPath).AddArgument($testRoot).AddArgument($During)
     $pending = $driver.BeginInvoke()

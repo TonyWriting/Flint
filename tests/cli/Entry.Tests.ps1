@@ -2,9 +2,12 @@
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'TestSupport.ps1')
 try {
     $cliPath = Join-Path (New-TestRuntime (Join-Path $TestRoot 'app')) 'agent.ps1'
+    # The entry point always reads flint.ini next to agent.ps1.
+    $runtimeConfig = Join-Path (Split-Path $cliPath -Parent) 'flint.ini'
+    Copy-Item -LiteralPath $config -Destination $runtimeConfig
     $launcher = Join-Path $TestRoot 'launch.ps1'
     Set-Content -LiteralPath $launcher -Encoding ASCII -Value @(
-        'param($CliPath, $ConfigPath, $LogDirectory, $WorkRoot, $ResumeId, [switch]$SinglePrompt, [string]$ReportedVersion)'
+        'param($CliPath, $LogDirectory, $WorkRoot, $ResumeId, [switch]$SinglePrompt, [string]$ReportedVersion)'
         'if ($ReportedVersion) { $PSVersionTable[''PSVersion''] = [version]$ReportedVersion }'
         'if ($ExecutionContext.SessionState.LanguageMode -ne ''ConstrainedLanguage'') { $ExecutionContext.SessionState.LanguageMode = ''ConstrainedLanguage'' }'
         @'
@@ -24,16 +27,16 @@ if ($SinglePrompt) {
         $response = @{ status = 'completed'; output = $items; usage = @{ input_tokens = 10; output_tokens = 5; input_tokens_details = @{ cached_tokens = 3 }; output_tokens_details = @{ reasoning_tokens = 2 } } }
         Set-Content -LiteralPath $OutFile -Value (ConvertTo-Json -InputObject $response -Depth 16 -Compress) -Encoding UTF8
     }
-    & $CliPath -NoAzure -ConfigFile $ConfigPath -TrajectoryDirectory $LogDirectory -Resume $ResumeId -Prompt 'Create a report and mark it complete.'
+    & $CliPath -NoAzure -TrajectoryDirectory $LogDirectory -Resume $ResumeId -Prompt 'Create a report and mark it complete.'
 } else {
-    & $CliPath -NoAzure -ConfigFile $ConfigPath -TrajectoryDirectory $LogDirectory -Resume $ResumeId
+    & $CliPath -NoAzure -TrajectoryDirectory $LogDirectory -Resume $ResumeId
 }
 if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
 '@
     )
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $logs = Join-Path $TestRoot 'cli-logs'
-    $output = @('/help', '/status', '/c', '/continue', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $logs
+    $output = @('/help', '/status', '/c', '/continue', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -LogDirectory $logs
     Assert-True ($LASTEXITCODE -eq 0) 'Run the CLI entry point with redirected interactive input.'
     $log = Get-ChildItem -LiteralPath $logs -Filter *.jsonl
     Assert-True (@($log).Count -eq 1) 'Create one trajectory per CLI session.'
@@ -44,7 +47,7 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     Assert-True (($output -join "`n").Contains('Trajectory:')) 'Allow the user to request the trajectory path with /status.'
     Assert-True (@($output | Where-Object { [string]$_ -like '*Nothing to continue.*' }).Count -eq 2) 'Accept /c and /continue, and do not call the model without a conversation.'
     $promptLogs = Join-Path $TestRoot 'prompt-logs'
-    $output = & $powerShell -NoProfile -NonInteractive -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $promptLogs -WorkRoot $WorkRoot -SinglePrompt
+    $output = & $powerShell -NoProfile -NonInteractive -File $launcher -CliPath $cliPath -LogDirectory $promptLogs -WorkRoot $WorkRoot -SinglePrompt
     Assert-True ($LASTEXITCODE -eq 0) 'Complete single-prompt writes without waiting for input.'
     $transcript = $output -join "`n"
     foreach ($noise in @('Trajectory:', 'estimated tokens', 'last API input', 'unknown; set', 'tokens: in', 'stopped: completed', 'exit 0')) {
@@ -60,13 +63,13 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     $promptMentions = @($promptEvents | Where-Object { (ConvertTo-Json -InputObject $_ -Depth 32 -Compress).Contains('Create a report and mark it complete.') })
     Assert-True (($promptMentions.event -join ',') -ceq 'user_input,history_appended') 'Log the prompt once as input and once as history, however many model calls follow.'
     $resumeId = $promptEvents[0].session_id
-    $output = & $powerShell -NoProfile -NonInteractive -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $promptLogs -WorkRoot $WorkRoot -ResumeId $resumeId -SinglePrompt
+    $output = & $powerShell -NoProfile -NonInteractive -File $launcher -CliPath $cliPath -LogDirectory $promptLogs -WorkRoot $WorkRoot -ResumeId $resumeId -SinglePrompt
     Assert-True ($LASTEXITCODE -eq 0) 'Resume through the actual CLI entry point.'
     $resumedTranscript = $output -join "`n"
     Assert-True ($resumedTranscript.Contains('Conversation restored.') -and $resumedTranscript.Contains('Token usage: total=45')) 'Continue the conversation and accumulate usage across invocations.'
     Assert-True ($resumedTranscript.Contains('> Create a report and mark it complete.') -and $resumedTranscript.Contains('Wrote prompt-report.md') -and $resumedTranscript.Contains('Report created and updated.')) 'Display saved user messages, tool summaries and answers on resume.'
     Assert-True ($resumedTranscript.Contains('-Resume ' + $resumeId) -and @(Get-ChildItem -LiteralPath $promptLogs -Filter *.jsonl).Count -eq 1) 'Keep the resume command and trajectory tied to the original session ID.'
-    $output = @('/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $promptLogs -WorkRoot $WorkRoot -ResumeId $resumeId
+    $output = @('/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -LogDirectory $promptLogs -WorkRoot $WorkRoot -ResumeId $resumeId
     Assert-True ($LASTEXITCODE -eq 0) 'Resume and exit without sending a new message.'
     $idleTranscript = $output -join "`n"
     Assert-True ($idleTranscript.Contains('Report created and updated.') -and $idleTranscript.Contains('Token usage: total=45') -and $idleTranscript.Contains('-Resume ' + $resumeId)) 'Show history with unchanged usage and identity when no new request is sent.'
@@ -79,22 +82,23 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     Set-Content -LiteralPath $invalidConfig -Encoding UTF8 -Value ((Get-TestConfigLines) -replace '/openai/v1/responses$', '/openai/v1')
     $misspelledConfig = Join-Path $TestRoot 'misspelled.ini'
     Set-Content -LiteralPath $misspelledConfig -Encoding UTF8 -Value ((Get-TestConfigLines) -replace '^api_key = ', 'api_kye = ')
-    $missingConfig = Join-Path $TestRoot 'missing.ini'
     $rejectedLogs = Join-Path $TestRoot 'rejected-logs'
     foreach ($case in @(
-        @{ path = $missingConfig; version = '5.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.0*Start Flint with powershell.exe*' },
-        @{ path = $missingConfig; version = '5.2'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.2*Start Flint with powershell.exe*' },
-        @{ path = $missingConfig; version = '6.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 6.0*Start Flint with powershell.exe*' },
-        @{ path = $missingConfig; version = '7.4'; message = '*Flint requires Windows PowerShell 5.1*Current version: 7.4*Start Flint with powershell.exe*' },
-        @{ path = $missingConfig; message = '*Configuration file not found*'; missing = $true },
+        @{ version = '5.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.0*Start Flint with powershell.exe*' },
+        @{ version = '5.2'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.2*Start Flint with powershell.exe*' },
+        @{ version = '6.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 6.0*Start Flint with powershell.exe*' },
+        @{ version = '7.4'; message = '*Flint requires Windows PowerShell 5.1*Current version: 7.4*Start Flint with powershell.exe*' },
+        @{ message = '*Configuration file not found*'; missing = $true },
         @{ path = $invalidConfig; message = '*complete HTTPS URL ending in /openai/v1/responses*' },
         @{ path = $misspelledConfig; message = "*Line 4: unknown setting 'api_kye' in ``[model``]*" }
     )) {
+        Remove-Item -LiteralPath $runtimeConfig -Force -ErrorAction SilentlyContinue
+        if ($case.path) { Copy-Item -LiteralPath $case.path -Destination $runtimeConfig }
         $versionArguments = @()
         if ($case.version) { $versionArguments = @('-ReportedVersion', $case.version) }
         try {
             $ErrorActionPreference = 'Continue'
-            $output = & $powerShell -NoProfile -NonInteractive -File $launcher -CliPath $cliPath -ConfigPath $case.path -LogDirectory $rejectedLogs -WorkRoot $WorkRoot -SinglePrompt @versionArguments 2>&1
+            $output = & $powerShell -NoProfile -NonInteractive -File $launcher -CliPath $cliPath -LogDirectory $rejectedLogs -WorkRoot $WorkRoot -SinglePrompt @versionArguments 2>&1
             $startupExitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = 'Stop' }
         $startupMessage = ($output -join "`n") -replace '\s+', ' '
@@ -106,16 +110,17 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
             foreach ($part in @('agent.ps1 -Setup', 'copy the template', 'flint.example.ini', 'endpoint, deployment and api_key under [model]')) {
                 Assert-True ($startupMessage.Contains($part)) ('Missing startup guidance: ' + $part + '. Received: ' + $startupMessage)
             }
-            Assert-True (-not (Test-Path -LiteralPath $case.path)) 'Leave creation of the missing configuration to the user.'
+            Assert-True (-not (Test-Path -LiteralPath $runtimeConfig)) 'Leave creation of the missing configuration to the user.'
         }
     }
+    Copy-Item -LiteralPath $config -Destination $runtimeConfig -Force
 
     # Setup runs without a configuration, reads the key from input and installs into the runtime that was invoked.
     $setupLauncher = Join-Path $TestRoot 'setup-launch.ps1'
     Set-Content -LiteralPath $setupLauncher -Encoding ASCII -Value @(
-        'param($CliPath, $Validate, $Setup, $ConfigPath)'
+        'param($CliPath, $Validate, $Setup)'
         'if ($ExecutionContext.SessionState.LanguageMode -ne ''ConstrainedLanguage'') { $ExecutionContext.SessionState.LanguageMode = ''ConstrainedLanguage'' }'
-        'if ($Validate) { & $CliPath -ValidateSetup $Validate } else { & $CliPath -Setup $Setup -ConfigFile $ConfigPath }'
+        'if ($Validate) { & $CliPath -ValidateSetup $Validate } else { & $CliPath -Setup $Setup }'
         'if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }'
     )
     $setupSource = New-TestSetup (Join-Path $TestRoot 'setup-source')
@@ -130,16 +135,15 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
         $validateExitCode = $LASTEXITCODE
     } finally { $ErrorActionPreference = 'Stop' }
     Assert-True ($validateExitCode -eq 1 -and ($output -join "`n").Contains('MAJOR.MINOR.PATCH')) 'Explain why a setup is invalid and exit with failure.'
-    $setupConfig = Join-Path $TestRoot 'setup-flint.ini'
-    $output = @('pasted-team-key') | & $powerShell -NoProfile -File $setupLauncher -CliPath $cliPath -Setup $setupSource -ConfigPath $setupConfig
+    $output = @('pasted-team-key') | & $powerShell -NoProfile -File $setupLauncher -CliPath $cliPath -Setup $setupSource
     $transcript = $output -join "`n"
     $runtimePlugin = Join-Path (Split-Path $cliPath -Parent) 'plugins\example\plugin.json'
     Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('Setup complete.') -and (Test-Path -LiteralPath $runtimePlugin)) ('Set up the invoked runtime from a team folder: ' + $transcript)
-    Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript -match 'Installed example 1\.0\.0 \(\d+\.\ds\)' -and $transcript.Contains('Wrote ' + $setupConfig)) 'Show where to get the key and report each step with its duration.'
-    Assert-True ($transcript.Contains("& '" + $cliPath + "' -ConfigFile '" + $setupConfig + "'")) ('Name the invoked entry point and the custom configuration in the start command: ' + $transcript)
-    Assert-True ((Read-FlintConfig $setupConfig).ApiKey -ceq 'pasted-team-key') 'Write the key read from input to flint.ini.'
+    Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript -match 'Installed example 1\.0\.0 \(\d+\.\ds\)' -and $transcript.Contains('Wrote ' + $runtimeConfig)) 'Show where to get the key and report each step with its duration.'
+    Assert-True ($transcript.Contains("& '" + $cliPath + "'")) ('Name the invoked entry point in the start command: ' + $transcript)
+    Assert-True ((Read-FlintConfig $runtimeConfig).ApiKey -ceq 'pasted-team-key') 'Replace the current key with the key read from input.'
     $statusLogs = Join-Path $TestRoot 'plugin-logs'
-    $output = @('/status', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $statusLogs
+    $output = @('/status', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -LogDirectory $statusLogs
     $transcript = $output -join "`n"
     Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('Plugins: example 1.0.0') -and $transcript.Contains('Plugin example 1.0.0: 2 reviewed reads')) 'Load the installed plugin in a new session and show it in /status.'
     Write-Host 'All CLI tests passed.'
