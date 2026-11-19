@@ -23,7 +23,7 @@
 | `lib/Plugins.ps1`、`lib/PluginInstall.ps1` | 插件的校验与加载；从 Azure DevOps、本地文件夹或 zip 安装插件。 |
 | `docs/` | 专题文档：[[docs/ToolPermissions|工具调用与权限]]、[[docs/Plugins|插件]]，以及 [[docs/examples/Markdown|Markdown 渲染示例]]。 |
 | `tests/` | 离线测试，目录与代码对应，结构见 [[#验证|验证]]。 |
-| `.env`、`.flint/`、`plugins/` | 本地配置、运行数据和已安装的插件，由 Git 忽略；根目录保留 `.env.example` 模板。 |
+| `flint.ini`、`.flint/`、`plugins/` | 本地配置、运行数据和已安装的插件，由 Git 忽略；根目录保留 `flint.example.ini` 模板。 |
 
 判断归属时，看代码负责什么：Windows 进程参数转义属于 `lib/Runtime.ps1`，Azure token 获取属于 `tools/azure/Auth.ps1`，kubectl 参数约束属于 `tools/Commands.ps1`。工具专用代码即使被多处调用，也放在对应工具目录。`lib` 是项目内部框架，工具调度会调用 `tools` 的注册和实现。
 
@@ -40,15 +40,16 @@ Azure 专用模块按以下职责加载：
 
 ## 启动
 
-将项目中的 [.env.example](.env.example) 复制为同目录的 `.env`，填写：
+将项目中的 [flint.example.ini](flint.example.ini) 复制为同目录的 `flint.ini`，在 `[model]` 下填写 Foundry 的 endpoint、部署名和 API key：
 
-```dotenv
-AZURE_OPENAI_ENDPOINT="https://<resource>.services.ai.azure.com/openai/v1/responses"
-AZURE_OPENAI_API_KEY="<your-key>"
-AZURE_OPENAI_DEPLOYMENT="<your-deployment>"
+```ini
+[model]
+endpoint = https://<resource>.services.ai.azure.com/openai/v1/responses
+deployment = <your-deployment>
+api_key = <your-key>
 ```
 
-Endpoint 必须是完整 HTTPS 地址，以 `/openai/v1/responses` 结尾，不含凭据、查询参数、fragment 或结尾斜杠。`.env` 必须存在；可用 `-EnvFile` 指定其他文件。文件中的值优先于同名环境变量，缺少配置时停止启动。
+Endpoint 必须是完整 HTTPS 地址，以 `/openai/v1/responses` 结尾，不含凭据、查询参数、fragment 或结尾斜杠。`flint.ini` 必须存在，可用 `-ConfigFile` 指定其他文件。注释单独成行，以 `;` 或 `#` 开头；值从等号后取到行尾，可以用一对引号括起。Flint 只读取这个文件，不读环境变量；遇到未知的节或设置、重复的设置、缺少必填项时停止启动，并指出所在行，报错中不会出现设置的值。API key 放在 `Authorization: Bearer` 中发送，只在内存和模型 worker 的环境变量中传递，不写入轨迹，输出中出现时会被脱敏。
 
 **启动时的当前目录就是工作目录**。以下示例在项目目录执行；从其他目录启动时，将 `$flint` 改为指向 `agent.ps1` 的相对路径：
 
@@ -99,7 +100,7 @@ Azure 认证需要一个**认证来源**，它只负责登录和签发 token，A
 |---|---|---|
 | 读取身份 | `az account show` | `Get-AzContext` |
 | 获取 token | `az account get-access-token --tenant <tenant> --resource <audience>` | `Get-AzAccessToken -TenantId <tenant> -ResourceUrl <audience>` |
-| 登录 | `az login --tenant <tenant> --allow-no-subscriptions` | `Connect-AzAccount -Tenant <tenant>` |
+| 登录（已知 tenant 时附带 tenant） | `az login --allow-no-subscriptions` | `Connect-AzAccount` |
 | 登录状态保存在 | Azure CLI 的标准缓存 | Azure PowerShell 的标准 context 缓存 |
 
 Azure CLI 由 Flint 直接调用，需支持 token 输出中的 `expires_on` 字段。`Az.Accounts` 在 Flint 主进程中导入一次，`Get-AzAccessToken` 需支持 `-TenantId` 和 `-ResourceUrl`；模块支持 `-AsSecureString` 时以 SecureString 取得 token，只在内存中转换。目标设备上的 `Az.Accounts` 必须被设备策略信任，例如 WDAC 允许 Microsoft 签名代码，或 AppLocker 允许模块所在目录（`Install-Module Az.Accounts -Scope AllUsers` 安装到 Program Files）；否则导入失败，Flint 报告 `could not be loaded`。
@@ -108,15 +109,16 @@ Azure CLI 由 Flint 直接调用，需支持 token 输出中的 `expires_on` 字
 
 本次 Flint 运行固定使用启动时选定的账户和 tenant，认证独立于 subscription。token 在进程内复用，剩余有效期不足 5 分钟时按同一 tenant 从认证来源的缓存重新获取，并核对用户身份。认证来源中默认订阅的变化不影响这个 token。若 MFA、Conditional Access 或登录撤销要求再次交互，Azure 工具返回 `authentication_required`，用户重新启动 Flint 完成登录；会话中途不再登录。Azure RBAC 权限不足返回 HTTP 403，保留当前登录。
 
-启动参数 `-AzureTenant` 接受 tenant GUID 或完整域名，例如 `contoso.onmicrosoft.com`。省略时使用认证来源当前用户记录中的 tenant；尚未登录时由登录流程确定 tenant。启动和刷新 token 均无需选择或校验 subscription；每次 ARM 请求在路径中指定目标订阅。
+Flint 使用认证来源当前记录的 tenant：Azure CLI 为默认订阅所在的 tenant，Azure PowerShell 为当前 context 的 tenant；尚未登录时由登录流程确定。kubectl 通过 kubeconfig 自行认证，不经过这次登录。需要换 tenant 时，先在终端用认证来源登录目标 tenant，再启动 Flint。启动和刷新 token 均无需选择或校验 subscription；每次 ARM 请求在路径中指定目标订阅。
 
 登录时 Flint 关闭订阅选择菜单，且不修改用户的全局配置：Azure CLI 只在登录命令执行期间设置 `AZURE_CORE_LOGIN_EXPERIENCE_V2=off`，结束后恢复原环境变量；Azure PowerShell 使用 `Update-AzConfig -LoginExperienceV2 Off -Scope Process`，只作用于当前 Flint 进程。认证来源自身仍可能在后台发现可访问的订阅。
 
 Flint 调用 Azure CLI 时临时设置 `AZURE_CORE_NO_COLOR=true`，避免部分受限环境的 CLI 在初始化终端颜色时导入不可用的 `ctypes` 模块。身份读取、取 token 和登录均使用该设置，成功或失败后恢复原环境变量；不修改 Azure CLI 全局配置，也不影响 Flint 自身的终端配色。
 
 ```powershell
-powershell.exe -NoProfile -File .\agent.ps1 -AzureTenant 'contoso.onmicrosoft.com'
-powershell.exe -NoProfile -File .\agent.ps1 -AzureTenant '<tenant-guid>'
+# Switch the tenant before starting Flint (Azure PowerShell: Connect-AzAccount -Tenant <tenant>).
+az login --tenant 'contoso.onmicrosoft.com' --allow-no-subscriptions
+powershell.exe -NoProfile -File .\agent.ps1
 
 # Use only file and Kubernetes tools, without invoking Azure authentication.
 powershell.exe -NoProfile -File .\agent.ps1 -NoAzure
@@ -190,7 +192,7 @@ Azure 可能先接受修改，再在后台执行。HTTP 202，以及仍在创建
 
 路径支持相对路径和本地盘符绝对路径，输入及解析后的路径均最多 240 个字符。路径参数拒绝 UNC、通配符、NTFS 备用数据流、设备名、符号链接及 junction；文件名过滤的通配符单独放在 `name_filter` 中。
 
-**Flint 仓库内所有普通文本文件均允许自动读取和搜索**，包括 `.env`、`.git`、`.flint`、配置和运行代码。这里的仓库指当前 Flint 安装目录（包含 `agent.ps1`、`lib/`、`tools/`），与启动时的工作目录分别判断，权限以解析后的完整路径为准。输出仍按现有规则脱敏。
+**Flint 仓库内所有普通文本文件均允许自动读取和搜索**，包括 `flint.ini`、`.git`、`.flint`、配置和运行代码。这里的仓库指当前 Flint 安装目录（包含 `agent.ps1`、`lib/`、`tools/`），与启动时的工作目录分别判断，权限以解析后的完整路径为准。输出仍按现有规则脱敏。
 
 仓库外额外允许列出、读取和搜索当前 session 的 `.flint/results/<session-id>/`；其余凭据路径（如 `.env`、`.env.*`、`.ssh`、`.kube`、`.azure`、常见私钥）、`.git`、`.flint`、当前配置和轨迹路径继续禁止普通文件读取。写操作始终保留上述路径保护，同时禁止改写 Flint 的 `agent.ps1`、`lib/`、`tools/`；目录写授权不能解除这些保护。
 
@@ -251,7 +253,7 @@ ConstrainedLanguage 不允许脚本读出按的是哪个键，Flint 改用系统
 
 故障记录包含 `failure.message`、`error_id`、`exception_type`、`category` 和 `script_stack_trace`，覆盖模型请求、工具异常和 Azure 认证失败。`azure_initialized` 同时保存启动提示和认证失败原因；静默认证失败后登录成功时，也保留最初的失败信息。ARM 响应保留 `request_id`、`correlation_id` 和服务返回的 `service_error`，便于关联 Azure 服务端记录；这些信息沿用现有脱敏流程。
 
-Flint 目录的 `.env`、`.env.*`、`.flint/` 和 `plugins/` 已被 Git 忽略，配置模板 `.env.example` 保留在仓库中。从其他仓库目录启动时，也需在该工作目录忽略 `.flint/`。`-TrajectoryDirectory` 只改变轨迹位置，Azure 响应文件始终保存在工作目录的 `.flint/results/`。
+Flint 目录的 `flint.ini`、`.flint/` 和 `plugins/` 已被 Git 忽略，配置模板 `flint.example.ini` 保留在仓库中。从其他仓库目录启动时，也需在该工作目录忽略 `.flint/`。`-TrajectoryDirectory` 只改变轨迹位置，Azure 响应文件始终保存在工作目录的 `.flint/results/`。
 
 | 参数或限制 | 默认值／上限 |
 |---|---|

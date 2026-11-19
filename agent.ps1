@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)][string]$Prompt,
-    [string]$EnvFile,
+    [string]$ConfigFile,
     [string]$Resume,
     [ValidateSet('none', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
     [ValidateRange(1, 1000)][int]$MaxTurns = 20,
@@ -13,7 +13,6 @@ param(
     [ValidateRange(256, 32768)][int]$MaxOutputTokens = 4096,
     [ValidateRange(0, 2000000)][int]$ContextWindow = 0,
     [string]$TrajectoryDirectory,
-    [ValidateLength(1, 253)][ValidatePattern('^(?:[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+)$')][string]$AzureTenant,
     [switch]$NoAzure,
     [string]$InstallPlugin,
     [string]$ValidatePlugin
@@ -23,7 +22,7 @@ if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -n
     throw ('Flint requires Windows PowerShell 5.1. Current version: {0}. Start Flint with powershell.exe -NoProfile -File "{1}".' -f $PSVersionTable.PSVersion, $PSCommandPath)
 }
 
-if (-not $EnvFile) { $EnvFile = Join-Path $PSScriptRoot '.env' }
+if (-not $ConfigFile) { $ConfigFile = Join-Path $PSScriptRoot 'flint.ini' }
 . (Join-Path $PSScriptRoot 'tools\Registry.ps1')
 . (Join-Path $PSScriptRoot 'tools\Commands.ps1')
 . (Join-Path $PSScriptRoot 'tools\Files.ps1')
@@ -38,7 +37,7 @@ foreach ($component in @('Security', 'Telemetry', 'Config', 'Plugins', 'PluginIn
 
 if ($MyInvocation.InvocationName -ne '.') {
     $ErrorActionPreference = 'Stop'
-    # Plugin maintenance runs without a model configuration or a conversation.
+    # Plugin maintenance runs without a configuration file or a conversation.
     if ($InstallPlugin -or $ValidatePlugin) {
         try {
             if ($InstallPlugin -and $ValidatePlugin) { throw 'Use either -InstallPlugin or -ValidatePlugin.' }
@@ -62,11 +61,11 @@ if ($MyInvocation.InvocationName -ne '.') {
     $session = $null
     $exitReason = 'cancelled'
     try {
-        $session = New-AgentSession -EnvFile $EnvFile -Resume $Resume -Effort $ReasoningEffort `
+        $session = New-AgentSession -ConfigFile $ConfigFile -Resume $Resume -Effort $ReasoningEffort `
             -RequestTimeoutSec $RequestTimeoutSec -ToolTimeoutSec $ToolTimeoutSec `
             -MaxToolCalls $MaxToolCalls -MaxParallelTools $MaxParallelTools -MaxOutputTokens $MaxOutputTokens `
             -ContextWindow $ContextWindow -TrajectoryDirectory $TrajectoryDirectory `
-            -AzureTenant $AzureTenant -NoAzure:$NoAzure
+            -NoAzure:$NoAzure
         $session.TurnLimit = $MaxTurns
         Show-FlintSession $session
         Initialize-FlintAzure $session

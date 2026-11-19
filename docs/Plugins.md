@@ -88,7 +88,7 @@ powershell.exe -NoProfile -File .\agent.ps1 -ValidatePlugin .\path\to\plugin
 
 ## 安装与更新
 
-`-InstallPlugin` 接受三种来源，不需要 `.env`：
+`-InstallPlugin` 接受三种来源，不需要 `flint.ini`：
 
 ```powershell
 # An Azure DevOps folder URL, copied from the folder view in the browser.

@@ -11,10 +11,11 @@ Set-Content -LiteralPath (Join-Path $testRoot 'wait.ps1') -Encoding ASCII -Value
     'param($PidPath)'
     'Set-Content -LiteralPath $PidPath -Value $PID; Start-Sleep -Seconds 60'
 )
-Set-Content -LiteralPath (Join-Path $testRoot '.env') -Encoding ASCII -Value @(
-    'AZURE_OPENAI_ENDPOINT=https://test.services.ai.azure.com/openai/v1/responses'
-    'AZURE_OPENAI_API_KEY=test-api-key'
-    'AZURE_OPENAI_DEPLOYMENT=test-deployment'
+Set-Content -LiteralPath (Join-Path $testRoot 'flint.ini') -Encoding ASCII -Value @(
+    '[model]'
+    'endpoint = https://test.services.ai.azure.com/openai/v1/responses'
+    'deployment = test-deployment'
+    'api_key = test-api-key'
 )
 $driver = [powershell]::Create()
 try {
@@ -56,8 +57,8 @@ function Read-Host {
     }
     Wait-ExitFixture
 }
-if ($During -in @('Model', 'Retry')) { & $AgentPath -NoAzure -EnvFile (Join-Path $TestRoot '.env') -Prompt 'Wait for the model.' }
-else { & $AgentPath -NoAzure -EnvFile (Join-Path $TestRoot '.env') }
+if ($During -in @('Model', 'Retry')) { & $AgentPath -NoAzure -ConfigFile (Join-Path $TestRoot 'flint.ini') -Prompt 'Wait for the model.' }
+else { & $AgentPath -NoAzure -ConfigFile (Join-Path $TestRoot 'flint.ini') }
 '@
     $null = $driver.AddScript($scriptText).AddArgument($agentPath).AddArgument($testRoot).AddArgument($During)
     $pending = $driver.BeginInvoke()

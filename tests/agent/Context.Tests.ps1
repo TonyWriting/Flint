@@ -84,7 +84,7 @@ try {
     Assert-True ($checkpoint.data.version -eq 3 -and $checkpoint.data.history_count -eq $historyCount -and @($checkpoint.data.omitted_call_ids).Count -eq 3) 'Checkpoint the conversation length and omitted outputs.'
 
     Push-Location -LiteralPath $WorkRoot
-    try { $resumed = New-AgentSession -EnvFile $config -Resume $Session.Id }
+    try { $resumed = New-AgentSession -ConfigFile $config -Resume $Session.Id }
     finally { Pop-Location }
     $resumed.MaxRequestChars = $Session.MaxRequestChars
     Assert-True ($resumed.History.Count -eq $historyCount -and $resumed.OmittedOutputs.Count -eq 3) 'Restore the conversation and omitted outputs.'
@@ -100,7 +100,7 @@ try {
 
     # Through the agent loop, compaction runs between model calls of one turn with real file reads.
     Push-Location -LiteralPath $WorkRoot
-    try { $loop = New-AgentSession -EnvFile $config }
+    try { $loop = New-AgentSession -ConfigFile $config }
     finally { Pop-Location }
     $loop.WorkerPath = $Session.WorkerPath; $loop.PermissionSessionDirectory = $Session.PermissionSessionDirectory
     $loop.MaxRequestChars = 150000
@@ -134,7 +134,7 @@ try {
 
     # Content that cannot be omitted can keep the request above 80% of the limit after trimming.
     Push-Location -LiteralPath $WorkRoot
-    try { $near = New-AgentSession -EnvFile $config }
+    try { $near = New-AgentSession -ConfigFile $config }
     finally { Pop-Location }
     $near.History = @(@{ role = 'user'; content = ('n' * 100000) })
     $near.MaxRequestChars = 100000000
@@ -150,7 +150,7 @@ try {
 
     # Redaction with newer credentials can shrink an omitted output; a recorded omission must still resume.
     Push-Location -LiteralPath $WorkRoot
-    try { $small = New-AgentSession -EnvFile $config }
+    try { $small = New-AgentSession -ConfigFile $config }
     finally { Pop-Location }
     $small.History = @(@{ role = 'user'; content = 'Read a short file.' })
     $small.History += New-TestCall 'short_1' 'read_file' '{"path":"short.txt","start_line":1,"start_column":1,"max_lines":200}' @{ status = 'ok'; exit_code = 0; output = 'short'; next_line = $null }
@@ -158,7 +158,7 @@ try {
     $small.OmittedOutputs['short_1'] = (Get-FlintOmittedOutput ([string]$small.History[2].output)).output
     Write-FlintCheckpoint $small
     Push-Location -LiteralPath $WorkRoot
-    try { $smallResumed = New-AgentSession -EnvFile $config -Resume $small.Id }
+    try { $smallResumed = New-AgentSession -ConfigFile $config -Resume $small.Id }
     finally { Pop-Location }
     Assert-True ($smallResumed.OmittedOutputs['short_1'] -ceq $small.OmittedOutputs['short_1']) 'Rebuild every recorded omission on resume, whatever its size.'
     Remove-Item -LiteralPath function:Write-Host

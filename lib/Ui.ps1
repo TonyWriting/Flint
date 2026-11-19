@@ -176,9 +176,8 @@ function Show-FlintExit {
     }
     $command = "& '" + $Session.EntryPath.Replace("'", "''") + "' -Resume " + $Session.Id
     if ($Session.NoAzure) { $command += ' -NoAzure' }
-    if ($Session.AzureTenant) { $command += ' -AzureTenant ' + $Session.AzureTenant }
-    $defaultConfig = Join-Path (Split-Path $Session.EntryPath -Parent) '.env'
-    if ($Session.ConfigPath -ine $defaultConfig) { $command += " -EnvFile '" + $Session.ConfigPath.Replace("'", "''") + "'" }
+    $defaultConfig = Join-Path (Split-Path $Session.EntryPath -Parent) 'flint.ini'
+    if ($Session.ConfigPath -ine $defaultConfig) { $command += " -ConfigFile '" + $Session.ConfigPath.Replace("'", "''") + "'" }
     $directory = Split-Path $Session.TrajectoryPath -Parent
     if ($directory -ine (Join-Path $Session.Root '.flint\trajectories')) { $command += " -TrajectoryDirectory '" + $directory.Replace("'", "''") + "'" }
     foreach ($option in @(

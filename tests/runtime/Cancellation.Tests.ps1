@@ -15,10 +15,11 @@ Set-Content -LiteralPath $childPath -Encoding ASCII -Value @(
     'if ($RequestPath) { $request = ConvertFrom-Json (Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8); if ($request.arguments.path -like ''parallel-*'') { Set-Content -LiteralPath (Join-Path $PSScriptRoot ($request.arguments.path + ''.pid'')) -Value $PID; Set-Content -LiteralPath (Join-Path $PSScriptRoot ($request.arguments.path + ''.request'')) -Value $RequestPath } }'
     ("Set-Content -LiteralPath '" + $pidPath.Replace("'", "''") + "' -Value `$PID; Start-Sleep -Seconds 60")
 )
-Set-Content -LiteralPath (Join-Path $testRoot '.env') -Encoding ASCII -Value @(
-    'AZURE_OPENAI_ENDPOINT=https://test.services.ai.azure.com/openai/v1/responses'
-    'AZURE_OPENAI_API_KEY=test-api-key'
-    'AZURE_OPENAI_DEPLOYMENT=test-deployment'
+Set-Content -LiteralPath (Join-Path $testRoot 'flint.ini') -Encoding ASCII -Value @(
+    '[model]'
+    'endpoint = https://test.services.ai.azure.com/openai/v1/responses'
+    'deployment = test-deployment'
+    'api_key = test-api-key'
 )
 $driver = [powershell]::Create()
 try {
@@ -29,7 +30,7 @@ if ($ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage') { $Ex
 . $AgentPath
 Set-Location -LiteralPath $TestRoot
 $script:TestRoot = $TestRoot
-$session = New-AgentSession -EnvFile (Join-Path $TestRoot '.env') -MaxParallelTools 1 -PluginDirectory (Join-Path $TestRoot 'plugins')
+$session = New-AgentSession -ConfigFile (Join-Path $TestRoot 'flint.ini') -MaxParallelTools 1 -PluginDirectory (Join-Path $TestRoot 'plugins')
 $session.PermissionSessionDirectory = Join-Path $TestRoot 'permissions'
 if ($During -eq 'Parallel') { $session.MaxParallelTools = 2; $session.WorkerPath = Join-Path $TestRoot 'child.ps1' }
 if ($During -eq 'Azure') {

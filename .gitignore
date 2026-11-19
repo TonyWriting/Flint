@@ -1,5 +1,5 @@
+/flint.ini
 /.env
 /.env.*
-!/.env.example
 /.flint/
 /plugins/

@@ -4,13 +4,11 @@ try {
     $cliPath = Join-Path (New-TestRuntime (Join-Path $TestRoot 'app')) 'agent.ps1'
     $launcher = Join-Path $TestRoot 'launch.ps1'
     Set-Content -LiteralPath $launcher -Encoding ASCII -Value @(
-        'param($CliPath, $ConfigPath, $LogDirectory, $WorkRoot, $ResumeId, [switch]$SinglePrompt, [string]$ReportedVersion, [string]$AzureTenant)'
+        'param($CliPath, $ConfigPath, $LogDirectory, $WorkRoot, $ResumeId, [switch]$SinglePrompt, [string]$ReportedVersion)'
         'if ($ReportedVersion) { $PSVersionTable[''PSVersion''] = [version]$ReportedVersion }'
         'if ($ExecutionContext.SessionState.LanguageMode -ne ''ConstrainedLanguage'') { $ExecutionContext.SessionState.LanguageMode = ''ConstrainedLanguage'' }'
         @'
 if ($WorkRoot) { Set-Location -LiteralPath $WorkRoot }
-$azureArguments = @{}
-if ($AzureTenant) { $azureArguments.AzureTenant = $AzureTenant }
 if ($SinglePrompt) {
     function Invoke-RestMethod {
         param($Method, $Uri, $Headers, $TimeoutSec, $MaximumRedirection, $ErrorAction, $ContentType, $Body, $OutFile)
@@ -26,16 +24,16 @@ if ($SinglePrompt) {
         $response = @{ status = 'completed'; output = $items; usage = @{ input_tokens = 10; output_tokens = 5; input_tokens_details = @{ cached_tokens = 3 }; output_tokens_details = @{ reasoning_tokens = 2 } } }
         Set-Content -LiteralPath $OutFile -Value (ConvertTo-Json -InputObject $response -Depth 16 -Compress) -Encoding UTF8
     }
-    & $CliPath -NoAzure -EnvFile $ConfigPath -TrajectoryDirectory $LogDirectory -Resume $ResumeId -Prompt 'Create a report and mark it complete.' @azureArguments
+    & $CliPath -NoAzure -ConfigFile $ConfigPath -TrajectoryDirectory $LogDirectory -Resume $ResumeId -Prompt 'Create a report and mark it complete.'
 } else {
-    & $CliPath -NoAzure -EnvFile $ConfigPath -TrajectoryDirectory $LogDirectory -Resume $ResumeId @azureArguments
+    & $CliPath -NoAzure -ConfigFile $ConfigPath -TrajectoryDirectory $LogDirectory -Resume $ResumeId
 }
 if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
 '@
     )
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $logs = Join-Path $TestRoot 'cli-logs'
-    $output = @('/help', '/status', '/c', '/continue', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $logs -AzureTenant 'contoso.onmicrosoft.com'
+    $output = @('/help', '/status', '/c', '/continue', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $logs
     Assert-True ($LASTEXITCODE -eq 0) 'Run the CLI entry point with redirected interactive input.'
     $log = Get-ChildItem -LiteralPath $logs -Filter *.jsonl
     Assert-True (@($log).Count -eq 1) 'Create one trajectory per CLI session.'
@@ -45,7 +43,6 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     Assert-True (-not (($output -join "`n").Contains('test-api-key'))) 'Keep credentials out of startup output.'
     Assert-True (($output -join "`n").Contains('Trajectory:')) 'Allow the user to request the trajectory path with /status.'
     Assert-True (@($output | Where-Object { [string]$_ -like '*Nothing to continue.*' }).Count -eq 2) 'Accept /c and /continue, and do not call the model without a conversation.'
-    Assert-True (($output -join "`n").Contains('-AzureTenant contoso.onmicrosoft.com')) 'Accept tenant domains at the entry point and preserve the selector in the resume command.'
     $promptLogs = Join-Path $TestRoot 'prompt-logs'
     $output = & $powerShell -NoProfile -NonInteractive -File $launcher -CliPath $cliPath -ConfigPath $config -LogDirectory $promptLogs -WorkRoot $WorkRoot -SinglePrompt
     Assert-True ($LASTEXITCODE -eq 0) 'Complete single-prompt writes without waiting for input.'
@@ -78,20 +75,20 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     Assert-True (@($resumedEvents | Where-Object { $_.event -eq 'model_request' }).Count -eq 3) 'Do not call the model to display restored history.'
     Assert-True (@($resumedEvents | Where-Object { $_.event -eq 'session_resumed' }).Count -eq 2) 'Record both continuations in the same trajectory.'
     for ($i = 0; $i -lt $resumedEvents.Count; $i++) { Assert-True ($resumedEvents[$i].sequence -eq ($i + 1) -and $resumedEvents[$i].session_id -ceq $resumeId) 'Append sequential events without changing session identity.' }
-    $invalidConfig = Join-Path $TestRoot 'invalid.env'
-    Set-Content -LiteralPath $invalidConfig -Encoding UTF8 -Value @(
-        'AZURE_OPENAI_ENDPOINT=https://test.services.ai.azure.com/openai/v1'
-        'AZURE_OPENAI_API_KEY=test-api-key'
-        'AZURE_OPENAI_DEPLOYMENT=test-deployment'
-    )
+    $invalidConfig = Join-Path $TestRoot 'invalid.ini'
+    Set-Content -LiteralPath $invalidConfig -Encoding UTF8 -Value ((Get-TestConfigLines) -replace '/openai/v1/responses$', '/openai/v1')
+    $misspelledConfig = Join-Path $TestRoot 'misspelled.ini'
+    Set-Content -LiteralPath $misspelledConfig -Encoding UTF8 -Value ((Get-TestConfigLines) -replace '^api_key = ', 'api_kye = ')
+    $missingConfig = Join-Path $TestRoot 'missing.ini'
     $rejectedLogs = Join-Path $TestRoot 'rejected-logs'
     foreach ($case in @(
-        @{ path = (Join-Path $TestRoot 'missing.env'); version = '5.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.0*Start Flint with powershell.exe*' },
-        @{ path = (Join-Path $TestRoot 'missing.env'); version = '5.2'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.2*Start Flint with powershell.exe*' },
-        @{ path = (Join-Path $TestRoot 'missing.env'); version = '6.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 6.0*Start Flint with powershell.exe*' },
-        @{ path = (Join-Path $TestRoot 'missing.env'); version = '7.4'; message = '*Flint requires Windows PowerShell 5.1*Current version: 7.4*Start Flint with powershell.exe*' },
-        @{ path = (Join-Path $TestRoot 'missing.env'); message = '*Configuration file not found*'; missing = $true },
-        @{ path = $invalidConfig; message = '*complete HTTPS URL ending in /openai/v1/responses*' }
+        @{ path = $missingConfig; version = '5.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.0*Start Flint with powershell.exe*' },
+        @{ path = $missingConfig; version = '5.2'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.2*Start Flint with powershell.exe*' },
+        @{ path = $missingConfig; version = '6.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 6.0*Start Flint with powershell.exe*' },
+        @{ path = $missingConfig; version = '7.4'; message = '*Flint requires Windows PowerShell 5.1*Current version: 7.4*Start Flint with powershell.exe*' },
+        @{ path = $missingConfig; message = '*Configuration file not found*'; missing = $true },
+        @{ path = $invalidConfig; message = '*complete HTTPS URL ending in /openai/v1/responses*' },
+        @{ path = $misspelledConfig; message = "*Line 4: unknown setting 'api_kye' in ``[model``]*" }
     )) {
         $versionArguments = @()
         if ($case.version) { $versionArguments = @('-ReportedVersion', $case.version) }
@@ -106,7 +103,7 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
         Assert-True (-not (Test-Path -LiteralPath $rejectedLogs)) 'Reject an invalid runtime or configuration before starting a session or making model requests.'
         Assert-True (-not $startupMessage.Contains('test-api-key')) 'Do not expose credentials in startup validation errors.'
         if ($case.missing) {
-            foreach ($part in @('Create this file using the template', '.env.example', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_DEPLOYMENT')) {
+            foreach ($part in @('Copy the template', 'flint.example.ini', 'endpoint, deployment and api_key under [model]')) {
                 Assert-True ($startupMessage.Contains($part)) ('Missing startup guidance: ' + $part + '. Received: ' + $startupMessage)
             }
             Assert-True (-not (Test-Path -LiteralPath $case.path)) 'Leave creation of the missing configuration to the user.'

@@ -1,14 +1,14 @@
 function New-AgentSession {
     param(
-        [string]$EnvFile, [string]$Effort = 'medium',
+        [string]$ConfigFile, [string]$Effort = 'medium',
         [int]$RequestTimeoutSec = 180, [int]$ToolTimeoutSec = 30,
         [int]$MaxToolCalls = 40, [int]$MaxOutputTokens = 4096,
         [int]$ContextWindow = 0, [string]$TrajectoryDirectory, [string]$Resume,
-        [string]$AzureTenant, [switch]$NoAzure, [ValidateRange(1, 8)][int]$MaxParallelTools = 4, [string]$PluginDirectory
+        [switch]$NoAzure, [ValidateRange(1, 8)][int]$MaxParallelTools = 4, [string]$PluginDirectory
     )
     $root = Get-Item -LiteralPath (Get-Location).Path -Force -ErrorAction Stop
     if (-not $root.PSIsContainer -or $root.PSProvider.Name -ne 'FileSystem') { throw 'The current PowerShell location must be a filesystem directory.' }
-    $config = Read-FlintConfig $EnvFile
+    $config = Read-FlintConfig $ConfigFile
     if ($ContextWindow -gt 0 -and $ContextWindow -le $MaxOutputTokens) { throw 'ContextWindow must exceed MaxOutputTokens.' }
     # Core rules are part of the installation; plugins add reviewed reads, guarded resources and knowledge for this session.
     $installRoot = Split-Path $PSScriptRoot -Parent
@@ -47,7 +47,7 @@ function New-AgentSession {
         TrajectoryPath = $logPath; EventSequence = $sequence; LogFailed = $false
         ConfigPath = $config.ConfigPath; EntryPath = Join-Path $installRoot 'agent.ps1'
         ResumeReady = $false; ResumedFrom = $Resume
-        AzureTenant = $AzureTenant; NoAzure = [bool]$NoAzure
+        NoAzure = [bool]$NoAzure
         Azure = @{ Initialized = $false; Status = 'unavailable'; Message = 'Azure has not been initialized. Restart Flint to initialize Azure authentication.' }
         ProtectedPaths = @($config.ConfigPath, $logDirectory.FullName)
         PluginDirectory = $PluginDirectory; Plugins = @($plugins.loaded); PluginErrors = @($plugins.errors); PluginChanges = @()

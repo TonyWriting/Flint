@@ -213,15 +213,10 @@ function Update-FlintAzureToken {
             throw 'Azure CLI returned an incomplete token or a different identity. A current Azure CLI with expires_on support is required.'
         }
         Assert-FlintAzureTenant $token.tenant
-        if ($token.tenant -ine $Session.Azure.Tenant -and
-            ($Session.Azure.Tenant -notmatch '\.' -or $token.tenant -notmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$')) {
-            throw ('{0} returned a token for a different tenant.' -f $provider)
-        }
+        if ($token.tenant -ine $Session.Azure.Tenant) { throw ('{0} returned a token for a different tenant.' -f $provider) }
         $expiresUtc = ([datetime]'1970-01-01T00:00:00Z').ToUniversalTime().AddSeconds([long]$token.expires_on)
         if ($expiresUtc -le ([datetime]::UtcNow).AddSeconds(30)) { throw ('{0} returned an expired token. Restart Flint to sign in to Azure.' -f $provider) }
         $state.AccessToken = [string]$token.accessToken
-        # The provider may resolve a requested tenant domain to its canonical ID.
-        $Session.Azure.Tenant = [string]$token.tenant
         $state.ExpiresUtc = $expiresUtc
         if ($Service -eq 'keyvault') { $state.Status = 'ready' }
     } finally { $token = $null }
@@ -230,12 +225,12 @@ function Update-FlintAzureToken {
 function Initialize-FlintAzure {
     param([hashtable]$Session)
     if ($Session.Azure.Initialized) { return }
-    $Session.Azure = @{ Initialized = $true; Status = 'unavailable'; AccessToken = $null; Account = ''; Tenant = $Session.AzureTenant; Provider = ''; CliPath = ''; ExpiresUtc = $null; Message = ''; LoginAttempted = $false }
+    # The tenant comes from the current Azure CLI or Azure PowerShell sign-in and stays fixed for this process.
+    $Session.Azure = @{ Initialized = $true; Status = 'unavailable'; AccessToken = $null; Account = ''; Tenant = ''; Provider = ''; CliPath = ''; ExpiresUtc = $null; Message = ''; LoginAttempted = $false }
     if ($Session.NoAzure) { $Session.Azure.Status = 'disabled'; $Session.Azure.Message = 'Azure tools are disabled by -NoAzure.'; return }
     Write-Host 'Initializing Azure authentication, please wait...' -ForegroundColor DarkGray
     $failure = $null
     try {
-        if ($Session.Azure.Tenant) { Assert-FlintAzureTenant $Session.Azure.Tenant }
         Select-FlintAzureProvider $Session
         $provider = Get-FlintAzureProviderName $Session
         $login = Get-FlintAzureLoginCommand $Session
