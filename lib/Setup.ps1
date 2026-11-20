@@ -1,5 +1,6 @@
 # Team setup: a folder that holds a flint.ini template without an API key and, optionally, Plugins\<name>
-# plugin folders. -Setup writes flint.ini with the user's key and makes the installed plugins match the folder.
+# plugin folders. -Setup writes flint.ini, keeping any key the user already set, and makes the installed plugins
+# match the folder.
 
 function ConvertFrom-FlintSetupUrl {
     param([string]$Url)
@@ -193,7 +194,7 @@ function Test-FlintSetup {
     $errors = @(); $model = $null; $plugins = @()
     try {
         $values = Read-FlintIniFile $template (Get-FlintConfigSchema)
-        if ($values.ContainsKey('model.api_key')) { throw 'remove api_key. Flint asks each user for the key during setup, so keys never live in the shared folder.' }
+        if ($values.ContainsKey('model.api_key')) { throw 'remove api_key. Each user pastes the key into their own flint.ini, so keys never live in the shared folder.' }
         $model = ConvertTo-FlintModelConfig $values -WithoutKey
     } catch { $errors += ('flint.ini: ' + $_.Exception.Message) }
     $pluginFolder = $null
