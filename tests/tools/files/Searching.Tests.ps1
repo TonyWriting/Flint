@@ -77,8 +77,7 @@ try {
     Assert-True ((Invoke-TestTool search_text @{ path = $other.result_path; keyword = 'needle' }).status -eq 'error') 'Keep another session result directory protected outside the Flint installation.'
     Assert-Throws { Search-FlintText $Session.Root ([guid]::NewGuid().ToString('N')) @{ path = $saved.result_path; keyword = 'needle'; start_line = 1; max_matches = 50 } @() } '*protected*'
     Write-FlintCheckpoint $Session
-    Push-Location -LiteralPath $WorkRoot
-    try { $resumed = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
+    $resumed = New-TestSession -Resume $Session.Id
     Assert-True ((Search-FlintText $resumed.Root $resumed.Id @{ path = $saved.result_path; keyword = 'needle'; start_line = 1; max_matches = 50 } @()).matches_returned -eq 1) 'Search saved results after resuming the same session.'
 
     Set-Content -LiteralPath $path -Value 'needle test-api-key password=fixture-private-value' -Encoding UTF8 -NoNewline

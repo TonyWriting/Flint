@@ -101,7 +101,7 @@ try {
     Assert-True ($null -eq (Get-FlintParallelCall $Session $readCall)) 'Without loaded rules, reads stay sequential.'
     $Session.CommandRules = $loadedRules
     Assert-True ($null -ne (Get-FlintParallelCall $Session $readCall)) 'Re-evaluate restored rules without retaining a stale decision.'
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     Assert-True (@($events | Where-Object { $_.event -eq 'command_permission' -and $_.data.source -eq 'fixed_read' -and $_.data.rule_source -ceq 'core' }).Count -gt 0) 'Record which rule set authorized each automatic read.'
 
 
@@ -122,7 +122,7 @@ try {
     function Read-Host { param($Prompt); return 'y' }
     Assert-True ((Invoke-CommandFixture @('needs-y')).status -eq 'ok') 'Read consent through the main-process terminal prompt.'
     $Session.Ui.Live = $false
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     Assert-True (@($events | Where-Object { $_.event -eq 'command_approval_decided' -and $_.data.allowed }).Count -gt 0) 'Record user decisions in the trajectory.'
     Write-Host 'All permission tests passed.'
 } finally { Remove-TestFixture }

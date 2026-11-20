@@ -45,7 +45,7 @@ try {
     Assert-True ($result.status -eq 'timeout' -and $result.output -like '*outcome may be unknown*') 'Require state verification after a write timeout.'
     $result = Invoke-TestTool write_file @{ path = 'note.txt'; content = 'content' }
     Assert-True ($result.status -eq 'timeout' -and $result.output -like '*outcome may be unknown*') 'Report uncertainty after a full-file write timeout.'
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     Assert-True (@($events | Where-Object { $_.event -eq 'tool_retry' }).Count -eq 0) 'Never automatically retry an uncertain write.'
     Write-Host 'All process tests passed.'
 } finally { Remove-TestFixture }

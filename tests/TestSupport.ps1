@@ -110,6 +110,29 @@ function New-TestSetup {
     return $Path
 }
 
+function New-TestSession {
+    param([string]$Resume)
+    # Sessions start in the working directory with the shared configuration, as the entry point does.
+    Push-Location -LiteralPath $script:WorkRoot
+    try { return New-AgentSession -ConfigFile (Join-Path $script:TestRoot 'flint.ini') -Resume $Resume } finally { Pop-Location }
+}
+
+function Get-TestEvents {
+    param([string]$Path = $script:Session.TrajectoryPath)
+    return @(Get-Content -LiteralPath $Path -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+}
+
+function New-TestResponse {
+    param([object[]]$Items)
+    # A completed model response that reports cached and reasoning usage.
+    return @{ status = 'completed'; output = $Items; usage = @{ input_tokens = 10; output_tokens = 5; input_tokens_details = @{ cached_tokens = 3 }; output_tokens_details = @{ reasoning_tokens = 2 } } }
+}
+
+function New-TestFunctionCall {
+    param([string]$Name, [hashtable]$Arguments)
+    return @{ type = 'function_call'; name = $Name; call_id = [guid]::NewGuid().ToString('N'); arguments = (ConvertTo-Json $Arguments -Depth 16 -Compress) }
+}
+
 function Remove-TestFixture {
     $resolved = (Resolve-Path -LiteralPath $script:TestRoot).ProviderPath
     if ($resolved -ne $script:TestRoot -or (Split-Path $resolved -Parent) -ne $script:TestParent) {
@@ -132,8 +155,7 @@ function Get-TestConfigLines {
 }
 $config = Join-Path $script:TestRoot 'flint.ini'
 Set-Content -LiteralPath $config -Encoding UTF8 -Value (Get-TestConfigLines)
-Push-Location -LiteralPath $script:WorkRoot
-try { $script:Session = New-AgentSession -ConfigFile $config } finally { Pop-Location }
+$script:Session = New-TestSession
 $script:Session.WorkerPath = New-TestWorkerLauncher $script:Session.WorkerPath (Join-Path $script:TestRoot 'tool-launcher.ps1')
 $script:Session.ModelWorkerPath = New-TestWorkerLauncher $script:Session.ModelWorkerPath (Join-Path $script:TestRoot 'model-launcher.ps1')
 Write-Host ('Testing PowerShell {0}, {1}' -f $PSVersionTable.PSVersion, $ExecutionContext.SessionState.LanguageMode)

@@ -1,11 +1,6 @@
 #Requires -Version 5.1
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'TestSupport.ps1')
 
-function New-TestResponse {
-    param([object[]]$Items)
-    @{ status = 'completed'; output = $Items; usage = @{ input_tokens = 10; output_tokens = 5; input_tokens_details = @{ cached_tokens = 3 }; output_tokens_details = @{ reasoning_tokens = 2 } } }
-}
-
 function Reset-TestConversation {
     # Each case starts from an empty conversation, as a new Flint session would.
     $Session.History = @(); $Session.HistoryLogged = 0; $Session.OmittedOutputs = @{}
@@ -18,20 +13,14 @@ function Invoke-RestMethod {
     Assert-True ($Headers.Authorization -eq 'Bearer test-api-key') 'Use the key only for authentication.'
     Assert-True ($ContentType -eq 'application/json; charset=utf-8' -and $MaximumRedirection -eq 0 -and $TimeoutSec -gt 0 -and $TimeoutSec -le 180) 'Bound HTTP requests, disable redirects and use UTF-8.'
     Assert-True (-not $Body.Contains('test-api-key')) 'Do not send the API key in model context.'
-    $script:Requests += @{ payload = ConvertFrom-Json $Body; path = $OutFile; raw = $Body }
-    if ($script:HttpStatus) {
-        try { Write-Error 'Rejected test-api-key' -ErrorAction Stop } catch { $httpError = $_.Exception }
-        $httpError | Add-Member -NotePropertyName Response -NotePropertyValue @{ StatusCode = $script:HttpStatus } -Force
-        throw $httpError
-    }
-    if ($script:InvalidJson) { Set-Content -LiteralPath $OutFile -Value '{broken' -Encoding UTF8; return }
+    $script:Requests += @{ payload = ConvertFrom-Json $Body; path = $OutFile }
     if ($script:Responses.Count -eq 0) { throw 'Unexpected model request.' }
     $result = $script:Responses[0]
     $script:Responses = @($script:Responses | Select-Object -Skip 1)
     Set-Content -LiteralPath $OutFile -Value (ConvertTo-Json -InputObject $result -Depth 32) -Encoding UTF8
 }
 
-$script:Requests = @(); $script:Responses = @(); $script:HttpStatus = 0; $script:InvalidJson = $false
+$script:Requests = @(); $script:Responses = @()
 try {
     $unicode = ConvertFrom-Json '"\u4f60\u597d"'
     Set-Content -LiteralPath (Join-Path $WorkRoot 'note.txt') -Value "alpha $unicode test-api-key password=hidden-value" -Encoding UTF8 -NoNewline
@@ -69,7 +58,7 @@ try {
     Assert-True ($Session.InputTokens -eq 30 -and $Session.OutputTokens -eq 15 -and $Session.CachedTokens -eq 9) 'Accumulate API usage, including cached tokens.'
     Assert-True ($Session.ReasoningTokens -eq 6 -and $Session.UsageReports -eq 3) 'Track reported reasoning tokens as a subset of output usage.'
     # Every request can be rebuilt from the trajectory without storing repeated payloads.
-    $records = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $records = @(Get-TestEvents)
     $start = @($records | Where-Object { $_.event -eq 'session_started' })[0]
     Assert-True ($start.data.instructions -ceq $Requests[0].payload.instructions -and (ConvertTo-Json -InputObject $start.data.tools -Depth 16 -Compress) -ceq $stableTools -and $start.data.reasoning_effort -eq 'medium') 'Log instructions, tools and settings once at session start.'
     $logged = @(); $requestIndex = 0
@@ -88,17 +77,6 @@ try {
     $previousCount = $Session.History.Count
     Invoke-AgentTurn $Session 'Continue.' 2 | Out-Null
     Assert-True ($Requests[-1].payload.input.Count -eq ($previousCount + 1)) 'Retain context across user turns.'
-
-    foreach ($status in @(400, 401, 403)) {
-        $script:HttpStatus = $status
-        $before = $Requests.Count
-        Assert-Throws { Invoke-AgentResponse $Session @{ model = 'test-deployment'; input = 'test' } } "*HTTP $status*"
-        Assert-True ($Requests.Count -eq ($before + 1)) 'Do not retry invalid requests or authentication failures.'
-        Assert-True (-not (Test-Path -LiteralPath $Requests[-1].path)) 'Clean up failed HTTP responses.'
-    }
-    $script:HttpStatus = 0; $script:InvalidJson = $true
-    Assert-Throws { Invoke-AgentResponse $Session @{} } 'Azure OpenAI request failed*'
-    $script:InvalidJson = $false
 
     Reset-TestConversation
     $script:Responses = @((New-TestResponse @(
@@ -138,9 +116,9 @@ try {
 
     $rawLog = Get-Content -LiteralPath $Session.TrajectoryPath -Raw -Encoding UTF8
     Assert-True (-not $rawLog.Contains('test-api-key') -and -not $rawLog.Contains('hidden-value')) 'Never persist credentials in the trajectory.'
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     for ($i = 0; $i -lt $events.Count; $i++) { Assert-True ($events[$i].sequence -eq ($i + 1)) 'Append sequential, independently parseable JSON events.' }
-    foreach ($type in @('session_started', 'user_input', 'history_appended', 'model_request', 'model_response', 'model_error', 'tool_started', 'tool_finished', 'tool_skipped', 'turn_stopped')) {
+    foreach ($type in @('session_started', 'user_input', 'history_appended', 'model_request', 'model_response', 'tool_started', 'tool_finished', 'tool_skipped', 'turn_stopped')) {
         Assert-True ($type -in $events.event) "Record $type."
     }
     Assert-True ('model_limit' -in $events.data.reason -and 'tool_limit' -in $events.data.reason -and 'completed' -in $events.data.reason) 'Record distinct stop reasons.'

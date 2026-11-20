@@ -2,11 +2,6 @@
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'TestSupport.ps1')
 $Session.MaxParallelTools = 1
 
-function New-TestResponse {
-    param([object[]]$Items)
-    @{ status = 'completed'; output = $Items; usage = @{ input_tokens = 10; output_tokens = 5 } }
-}
-
 function Invoke-RestMethod {
     param($Method, $Uri, $Headers, $TimeoutSec, $MaximumRedirection, $ErrorAction, $ContentType, $Body, $OutFile)
     $script:Requests += @{ payload = ConvertFrom-Json $Body }
@@ -22,10 +17,6 @@ function Get-TestOutputs {
         if ($item.type -eq 'function_call_output') { $outputs[$item.call_id] = ConvertFrom-Json $item.output }
     }
     return $outputs
-}
-
-function Get-TestEvents {
-    return @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
 }
 
 function Test-ProcessGone {
@@ -104,6 +95,7 @@ try {
     Assert-True ((Get-Content -LiteralPath (Join-Path $WorkRoot 'stop.txt') -Raw) -ceq 'kept') 'Keep the completed write.'
 
     # Reads and model requests stop at once and their process tree is terminated.
+    # The stop arrives as soon as the sleeper reports its PID; the process timeout bounds the wait if it never starts.
     $pidPath = Join-Path $TestRoot 'sleeper.pid'
     $sleeper = Join-Path $TestRoot 'sleeper.ps1'
     Set-Content -LiteralPath $sleeper -Encoding ASCII -Value @(
@@ -115,10 +107,9 @@ try {
     $arguments = @('-NoProfile', '-NonInteractive', '-File', ('"' + $sleeper + '"'))
     $Session.StopRequested = $false; $Session.StopDeferred = $false
     Remove-Item -LiteralPath $pidPath -ErrorAction SilentlyContinue
-    $script:StopAfter = [datetime]::UtcNow.AddSeconds(3)
-    $script:StopWhen = { param($State) [datetime]::UtcNow -gt $script:StopAfter }
+    $script:StopWhen = { param($State) Test-Path -LiteralPath $script:pidPath }
     $started = [datetime]::UtcNow
-    $native = Invoke-FlintProcess -FilePath $powerShell -ArgumentList $arguments -TimeoutSec 50 -WorkingDirectory $WorkRoot -Session $Session
+    $native = Invoke-FlintProcess -FilePath $powerShell -ArgumentList $arguments -TimeoutSec 20 -WorkingDirectory $WorkRoot -Session $Session
     Assert-True ($native.status -eq 'stopped' -and ([datetime]::UtcNow - $started).TotalSeconds -lt 20) 'Stop a running read at once.'
     $sleeperId = [int](Get-Content -LiteralPath $pidPath)
     Assert-True (Test-ProcessGone $sleeperId) 'Terminate the stopped process.'
@@ -128,12 +119,11 @@ try {
     $native = Invoke-FlintProcess -FilePath $powerShell -ArgumentList ($arguments + @('-Seconds', '2')) -TimeoutSec 50 -WorkingDirectory $WorkRoot -Session $Session
     Assert-True ($native.status -eq 'ok' -and $native.exit_code -eq 0 -and $Session.StopRequested) 'Let a deferred process finish while recording the stop request.'
 
-    $Session.Ui.Live = $true; $Session.ModelWorkerPath = $sleeper
+    $Session.Ui.Live = $true; $Session.ModelWorkerPath = $sleeper; $Session.RequestTimeoutSec = 20
     $Session.StopRequested = $false; $Session.StopDeferred = $false
     Remove-Item -LiteralPath $pidPath -ErrorAction SilentlyContinue
     $errors = @(Get-TestEvents | Where-Object { $_.event -eq 'model_error' }).Count
-    $script:StopAfter = [datetime]::UtcNow.AddSeconds(3)
-    $script:StopWhen = { param($State) [datetime]::UtcNow -gt $script:StopAfter }
+    $script:StopWhen = { param($State) Test-Path -LiteralPath $script:pidPath }
     $started = [datetime]::UtcNow
     Assert-Throws { Invoke-AgentResponse $Session @{ input = 'stop' } } '*Stopped by the user*'
     Assert-True (([datetime]::UtcNow - $started).TotalSeconds -lt 20) 'Stop a running model request at once.'

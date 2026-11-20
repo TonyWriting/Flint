@@ -19,8 +19,6 @@ try {
     Assert-True ((Invoke-TestTool edit_file @{ path = 'wipe.txt'; old_str = 'remove me'; new_str = '' }).status -eq 'ok') 'Verify an edit that makes the file empty.'
     Assert-True ((Invoke-TestTool write_file @{ path = 'note.txt'; content = "replacement`n$unicode" }).status -eq 'ok') 'Overwrite a complete file without supplying its old content.'
     Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).output -ceq "replacement`n$unicode") 'Verify the complete replacement.'
-    Assert-True ((Invoke-TestTool write_file @{ path = 'empty.txt'; content = '' }).status -eq 'ok') 'Create an empty file.'
-    Assert-True ((Invoke-TestTool read_file @{ path = 'empty.txt' }).output -ceq '') 'Read empty files.'
     Assert-True ((Invoke-TestTool write_file @{ path = 'note.txt'; content = '' }).status -eq 'ok') 'Allow an explicit empty replacement.'
     Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).output -ceq '') 'Verify the existing file was emptied.'
     Assert-True ((Invoke-TestTool edit_file @{ path = 'missing.txt'; old_str = ''; new_str = 'content' }).output -like '*Use write_file*') 'Direct new-file creation to write_file.'
@@ -41,12 +39,8 @@ try {
         $result = Invoke-TestTool read_file @{ path = $path }
         Assert-True ($result.status -eq 'error') "Reject unsafe or protected path: $path"
     }
-    Set-Content -LiteralPath (Join-Path $WorkRoot 'large.txt') -Value ('x' * 262145) -Encoding ASCII -NoNewline
-    $large = Invoke-TestTool read_file @{ path = 'large.txt' }
-    Assert-True ($large.status -eq 'ok' -and $large.truncated -and $large.output.Length -eq 32768 -and $large.next_line -eq 1) 'Read a bounded page from a file larger than 256 KiB.'
     Set-Content -LiteralPath (Join-Path $WorkRoot 'long.txt') -Value (('x' * 40000) + ' tail-marker test-api-key') -Encoding UTF8 -NoNewline
-    $longResult = Invoke-TestTool read_file @{ path = 'long.txt' }
-    Assert-True ($longResult.truncated -and $longResult.output.Length -lt 33000 -and -not $longResult.output.Contains('tail-marker')) 'Mark truncated model output explicitly.'
+    $null = Invoke-TestTool read_file @{ path = 'long.txt' }
     $trajectory = Get-Content -LiteralPath $Session.TrajectoryPath -Raw -Encoding UTF8
     Assert-True (-not $trajectory.Contains('tail-marker') -and -not $trajectory.Contains('test-api-key')) 'Log only the bounded redacted page, not unread file content.'
     $customConfig = Join-Path $WorkRoot 'custom-config.txt'

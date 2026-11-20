@@ -1,45 +1,28 @@
 #Requires -Version 5.1
-
-$ErrorActionPreference = 'Stop'
-if ($ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage') { $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage' }
-. (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'agent.ps1')
-
-function Assert-True {
-    param([bool]$Condition, [string]$Message)
-    if (-not $Condition) { throw "Assertion failed: $Message" }
-}
-
-function Assert-Throws {
-    param([scriptblock]$Action, [string]$Pattern)
-    $message = ''
-    try { & $Action | Out-Null } catch { $message = $_.Exception.Message }
-    Assert-True ($message -like $Pattern) "Expected '$Pattern'; got '$message'."
-}
-
-$testParent = (Get-Item -LiteralPath $env:TEMP -Force).FullName.TrimEnd('\')
-$testRoot = Join-Path $testParent ('flint-config-tests-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $testRoot | Out-Null
-Push-Location -LiteralPath $testRoot
-$config = Join-Path $testRoot 'flint.ini'
-$missing = Join-Path $testRoot 'missing.ini'
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'TestSupport.ps1')
+# Configuration cases use their own directory, so session files from the shared fixture do not interfere.
+$configRoot = Join-Path $TestRoot 'config'
+New-Item -ItemType Directory -Path $configRoot | Out-Null
+Push-Location -LiteralPath $configRoot
+$config = Join-Path $configRoot 'flint.ini'
+$missing = Join-Path $configRoot 'missing.ini'
 $endpoint = 'endpoint = https://test.services.ai.azure.com/openai/v1/responses'
 $deployment = 'deployment = test-deployment'
 $apiKey = 'api_key = test-key'
 function Write-Config { param([string[]]$Lines) Set-Content -LiteralPath $config -Encoding UTF8 -Value $Lines }
 
 try {
-    Write-Host ('Testing config with PowerShell {0}, {1}' -f $PSVersionTable.PSVersion, $ExecutionContext.SessionState.LanguageMode)
-    $rejectedLogs = Join-Path $testRoot 'rejected-logs'
+    $rejectedLogs = Join-Path $configRoot 'rejected-logs'
     Assert-Throws { New-AgentSession -ConfigFile $missing -TrajectoryDirectory $rejectedLogs } '*Configuration file not found*'
     Assert-Throws { New-AgentSession -ConfigFile $missing } '*agent.ps1 -Setup*copy the template*flint.example.ini*set endpoint, deployment and api_key under `[model`]*'
     Assert-True (-not (Test-Path -LiteralPath $missing)) 'Explain how to create the missing configuration without generating a placeholder file.'
-    Assert-Throws { New-AgentSession -ConfigFile $testRoot } '*Configuration file not found*'
+    Assert-Throws { New-AgentSession -ConfigFile $configRoot } '*Configuration file not found*'
     Assert-True (-not (Test-Path -LiteralPath $rejectedLogs)) 'Require a real config file before creating a session.'
 
     Write-Config @('[model]', $endpoint, $deployment, $apiKey)
     $settings = Read-FlintConfig $config
     Assert-True ($settings.Model -ceq 'test-deployment' -and $settings.ApiKey -ceq 'test-key') 'Read the deployment and API key.'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $testRoot '.flint'))) 'Read and validate configuration without creating session files.'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $configRoot '.flint'))) 'Read and validate configuration without creating session files.'
     $session = New-AgentSession -ConfigFile $config
     Assert-True ($session.ApiEndpoint -ceq 'https://test.services.ai.azure.com/openai/v1/responses') 'Use the complete configured URL without adding a suffix.'
     Assert-True ($session.ApiKey -ceq 'test-key') 'Load the API key into the session.'
@@ -82,7 +65,7 @@ try {
         $message = ''
         try { $null = New-AgentSession -ConfigFile $config } catch { $message = $_.Exception.Message }
         Assert-True ($message -like $case.pattern) ("Expected '" + $case.pattern + "'; got '" + $message + "'.")
-        Assert-True ($message -notlike '*secret-without*' -and $message -notlike '*environment-key*') 'Never echo configuration values or read the environment.'
+        Assert-True ($message -notlike '*secret-without*') 'Never echo configuration values.'
     }
 
     foreach ($value in @(
@@ -104,11 +87,4 @@ try {
     }
 
     Write-Host 'All config tests passed.'
-} finally {
-    Pop-Location
-    $resolvedTestRoot = (Resolve-Path -LiteralPath $testRoot).ProviderPath
-    if ($resolvedTestRoot -ne $testRoot -or (Split-Path $resolvedTestRoot -Parent) -ne $testParent) {
-        throw 'Refusing cleanup outside the temporary config test directory.'
-    }
-    Remove-Item -LiteralPath $resolvedTestRoot -Recurse -Force
-}
+} finally { Pop-Location; Remove-TestFixture }

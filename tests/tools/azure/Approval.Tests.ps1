@@ -84,7 +84,7 @@ function Invoke-WebRequest {
     Assert-True ((Invoke-AgentTool $Session azure_request '{"method":"GET","path":"/subscriptions?api-version=2022-12-01","body":""}').status -eq 'error') 'Require the purpose field in the current Azure schema.'
     Assert-True ((Invoke-AgentTool $Session run_command '{"executor":"kubectl","arguments":["unknown"]}').status -eq 'error') 'Require the purpose field in the current native-command schema.'
     Assert-True ($ApprovalReads -eq $promptCount) 'Invalid descriptions never reach the user approval prompt.'
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     Assert-True (@($events | Where-Object { $_.event -eq 'azure_permission' -and $_.data.source -eq 'resource_graph_query' }).Count -ge 4) 'Record the concrete read rule used for automatic execution.'
     Assert-True (@($events | Where-Object { $_.event -in @('azure_approval_requested', 'command_approval_requested') -and $_.data.purpose }).Count -ge 2) 'Record the explanation alongside approval requests.'
     Write-Host 'All Azure and command approval tests passed.'

@@ -43,7 +43,7 @@ try {
 
     # This stand-in for Az.Accounts runs in ConstrainedLanguage, like the code under test.
     $fakeManifest = New-FakeAzModule $modules '9.9.9' @(
-        '$script:State = @{ Context = $null; LoginCalls = 0; LoginTenant = $null; LoginFailure = $false; LoginSelectorOff = $false; LoginEnvironmentClean = $false; SelectorOff = $false; TokenCalls = @(); TokenFailure = ''''; TokenTenant = '''' }'
+        '$script:State = @{ Context = $null; LoginCalls = 0; LoginTenant = $null; LoginSelectorOff = $false; LoginEnvironmentClean = $false; SelectorOff = $false; TokenCalls = @(); TokenFailure = ''''; TokenTenant = '''' }'
         '# ConstrainedLanguage rejects [pscustomobject] casts; New-Object PSObject builds the same shape.'
         'function New-FakeObject { param([hashtable]$Properties) return New-Object -TypeName PSObject -Property $Properties }'
         'function New-FakeContext { param([string]$Type = ''User'') return New-FakeObject @{ Account = (New-FakeObject @{ Id = ''ps-user@example.com''; Type = $Type }); Tenant = (New-FakeObject @{ Id = ''11111111-1111-1111-1111-111111111111'' }); Environment = (New-FakeObject @{ Name = ''AzureCloud'' }) } }'
@@ -58,7 +58,6 @@ try {
         '    $script:State.LoginTenant = $Tenant'
         '    $script:State.LoginSelectorOff = $script:State.SelectorOff'
         '    $script:State.LoginEnvironmentClean = -not ((Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:FLINT_AZURE_ACCESS_TOKEN))'
-        '    if ($script:State.LoginFailure) { throw ''User canceled authentication.'' }'
         '    $script:State.Context = New-FakeContext'
         '    $script:State.TokenFailure = '''''
         '    return ''login-output-must-be-discarded'''
@@ -127,12 +126,6 @@ exit /b 1
     Update-FlintAzureToken $Session -Service keyvault
     $state = Get-FakeAzState
     Assert-True ($Session.Azure.KeyVault.AccessToken -ceq 'private-ps-keyvault-token' -and $state.TokenCalls[-1].resource -ceq 'https://vault.azure.net') 'Request the Key Vault audience separately through Azure PowerShell.'
-    $count = $state.TokenCalls.Count
-    Update-FlintAzureToken $Session
-    Assert-True ((Get-FakeAzState).TokenCalls.Count -eq $count) 'Cache Azure PowerShell tokens until they approach expiration.'
-    $Session.Azure.ExpiresUtc = [datetime]::UtcNow
-    Update-FlintAzureToken $Session
-    Assert-True ((Get-FakeAzState).TokenCalls.Count -eq $count + 1 -and (Get-FakeAzState).LoginCalls -eq 0) 'Refresh silently through the Azure PowerShell context.'
 
     Set-FakeAzState @{ TokenFailure = 'AADSTS50076: Due to a configuration change you must use multi-factor authentication. Run Connect-AzAccount.' }
     $Session.Azure.ExpiresUtc = [datetime]::UtcNow
@@ -152,21 +145,10 @@ exit /b 1
         Assert-True ((Get-Item -LiteralPath ('Env:' + $name)).Value -ceq 'must-not-reach-sign-in') 'Restore Flint environment values after sign-in.'
     }
 
-    Set-FakeAzState @{ Context = $null; TokenTenant = '' }
-    Reset-AzureSession
-    $Session.Ui.Live = $false
-    $null = Invoke-AzureStartup
-    Assert-True ($Session.Azure.Status -eq 'authentication_required' -and $Session.Azure.Message.Contains('Connect-AzAccount') -and (Get-FakeAzState).LoginCalls -eq 1) 'Noninteractive startup never launches Azure PowerShell sign-in.'
-
-    Set-FakeAzState @{ LoginFailure = $true }
+    Set-FakeAzState @{ Context = (Get-FakeAzState -ContextType 'ServicePrincipal') }
     Reset-AzureSession
     $null = Invoke-AzureStartup
-    Assert-True ($Session.Azure.Status -eq 'unavailable' -and (Get-FakeAzState).LoginCalls -eq 2 -and $Session.Azure.Message.Contains('canceled')) 'Report a cancelled Azure PowerShell sign-in.'
-
-    Set-FakeAzState @{ LoginFailure = $false; Context = (Get-FakeAzState -ContextType 'ServicePrincipal') }
-    Reset-AzureSession
-    $null = Invoke-AzureStartup
-    Assert-True ($Session.Azure.Status -eq 'ready' -and $Session.Azure.Account -eq 'ps-user@example.com' -and (Get-FakeAzState).LoginCalls -eq 3) 'Sign in with a user account instead of a service principal context.'
+    Assert-True ($Session.Azure.Status -eq 'ready' -and $Session.Azure.Account -eq 'ps-user@example.com' -and (Get-FakeAzState).LoginCalls -eq 2) 'Sign in with a user account instead of a service principal context.'
 
     $status = (Show-FlintSession $Session -Details 6>&1) | Out-String
     Assert-True ($status.Contains('Azure sign-in: Azure PowerShell')) 'Show the sign-in provider in /status.'

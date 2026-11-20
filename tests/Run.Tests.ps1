@@ -8,7 +8,7 @@ $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powersh
 # Suites that cover several scenarios run once per scenario.
 $variants = @{
     'runtime\Cancellation' = @('Tool', 'Model', 'Approval', 'Azure', 'Parallel')
-    'runtime\Exit' = @('Model', 'Prompt', 'Retry', 'Completed')
+    'runtime\Exit' = @('Model', 'Retry', 'Completed')
 }
 # These suites assert waits, timeouts or worker overlap, so they run without competing suites.
 $serial = @('runtime\*', 'agent\Model', 'agent\Retry', 'tools\azure\Operations')

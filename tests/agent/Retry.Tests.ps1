@@ -46,6 +46,7 @@ try {
         $script:Requests = @(); $script:Waits = @(); $script:Failures = @($status)
         Assert-Throws { Invoke-AgentResponse $Session @{ input = 'test' } } '*Azure OpenAI request failed*'
         Assert-True ($Requests.Count -eq 1 -and $Waits.Count -eq 0) 'Fail immediately for permanent, ambiguous, or unclassified errors.'
+        Assert-True (-not (Test-Path -LiteralPath $Requests[0].path)) 'Clean up the response file after a permanent failure.'
     }
     $Session.ApiKeyHelp = 'Get the current key from the team vault.'
     foreach ($case in @(@{ status = 401; help = $true }, @{ status = 403; help = $false })) {
@@ -84,7 +85,7 @@ try {
     $answer = Invoke-AgentTurn $Session 'Write once.'
     Assert-True ($answer -eq 'Done.' -and $script:ToolWrites -eq 1) 'Execute returned tools once after a successful model response.'
     Assert-True ($Session.ModelCalls -eq 3 -and $Session.UsageReports -eq 2 -and $Session.InputTokens -eq 20 -and $Session.OutputTokens -eq 10) 'Count HTTP attempts while adding each reported usage exactly once.'
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     Assert-True (@($events | Where-Object { $_.event -eq 'model_retry' }).Count -gt 0 -and -not (Get-Content -LiteralPath $Session.TrajectoryPath -Raw -Encoding UTF8).Contains('test-api-key')) 'Record retries without credentials.'
     $modelFailure = @($events | Where-Object { $_.event -eq 'model_error' })[0].data.failure
     Assert-True ($modelFailure.error_id -and $modelFailure.exception_type -and $modelFailure.script_stack_trace -and -not $modelFailure.message.Contains('test-api-key')) 'Record model exception context through the existing redaction path.'

@@ -8,13 +8,9 @@ function Invoke-AgentResponse {
     $reply = $script:Replies[0]; $script:Replies = @($script:Replies | Select-Object -Skip 1)
     return $reply
 }
-function New-ParallelCall {
-    param([string]$Name, [hashtable]$Arguments)
-    return @{ type = 'function_call'; name = $Name; call_id = [guid]::NewGuid().ToString('N'); arguments = (ConvertTo-Json $Arguments -Depth 16 -Compress) }
-}
 function New-ParallelRead {
     param([string]$Path)
-    return New-ParallelCall read_file @{ path = $Path; start_line = 1; start_column = 1; max_lines = 200 }
+    return New-TestFunctionCall read_file @{ path = $Path; start_line = 1; start_column = 1; max_lines = 200 }
 }
 function Set-ParallelReplies {
     param([object[]]$Calls)
@@ -57,11 +53,11 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
 '@
     $Session.WorkerPath = Join-Path $app 'tools\Worker.ps1'
     $Session.ToolTimeoutSec = 20
-    foreach ($name in @('slow-a.txt', 'slow-b.txt', 'fast.txt', 'changed.txt', 'slow-1.txt', 'slow-2.txt', 'slow-3.txt', 'slow-4.txt', 'slow-5.txt', 'slow-6.txt', 'hang-timeout.txt', 'fast-timeout.txt', 'fast-stop.txt', 'hang-stop.txt', 'never-stop.txt', 'fast-log.txt', 'hang-log.txt')) {
+    foreach ($name in @('slow-a.txt', 'slow-b.txt', 'fast.txt', 'changed.txt', 'slow-1.txt', 'slow-2.txt', 'slow-3.txt', 'hang-timeout.txt', 'fast-timeout.txt', 'fast-stop.txt', 'hang-stop.txt', 'never-stop.txt', 'fast-log.txt', 'hang-log.txt')) {
         Set-Content -LiteralPath (Join-Path $WorkRoot $name) -Value 'original' -Encoding UTF8 -NoNewline
     }
     $a = New-ParallelRead 'slow-a.txt'; $b = New-ParallelRead 'slow-b.txt'
-    $write = New-ParallelCall write_file @{ path = 'changed.txt'; content = 'updated' }
+    $write = New-TestFunctionCall write_file @{ path = 'changed.txt'; content = 'updated' }
     $after = New-ParallelRead 'changed.txt'; $fast = New-ParallelRead 'fast.txt'
     Set-ParallelReplies @($a, $b, $write, $after, $fast)
     Assert-True ((Invoke-AgentTurn $Session 'Read, update, and verify.' 2) -eq 'Done.') 'Complete a mixed tool batch.'
@@ -78,10 +74,11 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     Assert-True ((New-FlintPayload $Session).parallel_tool_calls) 'Allow the model to propose multiple tool calls.'
 
     $Session.MaxParallelTools = 2
-    $calls = @(1..6 | ForEach-Object { New-ParallelRead ('slow-' + $_ + '.txt') })
+    # With a limit of two, three slow reads need a second group.
+    $calls = @(1..3 | ForEach-Object { New-ParallelRead ('slow-' + $_ + '.txt') })
     Set-ParallelReplies $calls
-    $null = Invoke-AgentTurn $Session 'Read six files.' 2
-    $timeline = @(foreach ($number in 1..6) {
+    $null = Invoke-AgentTurn $Session 'Read three files.' 2
+    $timeline = @(foreach ($number in 1..3) {
         $begin = Read-ParallelTrace ('read_file-slow-' + $number + '.txt') start
         $end = Read-ParallelTrace ('read_file-slow-' + $number + '.txt') end
         @{ ticks = $begin.ticks; delta = 1 }; @{ ticks = $end.ticks; delta = -1 }
@@ -129,19 +126,19 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
 
     $script:StopMode = ''
     function Resolve-FlintCommandProgram { param($Executor); return @{ path = (Join-Path $script:TestRoot 'kubectl.exe') } }
-    $readCommand = New-ParallelCall run_command @{ executor = 'kubectl'; arguments = @('version', '--client'); purpose = 'Read the client version.' }
+    $readCommand = New-TestFunctionCall run_command @{ executor = 'kubectl'; arguments = @('version', '--client'); purpose = 'Read the client version.' }
     Assert-True ([bool](Get-FlintParallelCall $Session $readCommand)) 'Use reviewed kubectl rules for concurrency eligibility.'
-    $unknown = New-ParallelCall run_command @{ executor = 'kubectl'; arguments = @('unclassified'); purpose = 'Claim a read-only operation.' }
+    $unknown = New-TestFunctionCall run_command @{ executor = 'kubectl'; arguments = @('unclassified'); purpose = 'Claim a read-only operation.' }
     $invocation = New-FlintCommandInvocation $Session (ConvertFrom-Json $unknown.arguments)
     $Session.Approvals.kubectl = @($Session.Approvals.kubectl) + (ConvertTo-Json -InputObject $invocation -Depth 16 -Compress)
     Assert-True (-not (Get-FlintParallelCall $Session $unknown)) 'An exact session approval never grants read-only concurrency.'
-    Assert-True (-not (Get-FlintParallelCall $Session $write) -and -not (Get-FlintParallelCall $Session (New-ParallelCall unknown_tool @{}))) 'Keep writes and unknown tools out of concurrent batches.'
+    Assert-True (-not (Get-FlintParallelCall $Session $write) -and -not (Get-FlintParallelCall $Session (New-TestFunctionCall unknown_tool @{}))) 'Keep writes and unknown tools out of concurrent batches.'
 
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     for ($index = 0; $index -lt $events.Count; $index++) { Assert-True ($events[$index].sequence -eq $index + 1) 'Serialize all log events in the main process.' }
     Assert-True ('tool_batch_started' -in $events.event -and 'tool_batch_finished' -in $events.event) 'Record batch boundaries without exposing worker state.'
     $script:StopMode = 'log'
-    Set-ParallelReplies @((New-ParallelRead 'fast-log.txt'), (New-ParallelRead 'hang-log.txt'), (New-ParallelCall write_file @{ path = 'must-not-write.txt'; content = 'unexpected' }))
+    Set-ParallelReplies @((New-ParallelRead 'fast-log.txt'), (New-ParallelRead 'hang-log.txt'), (New-TestFunctionCall write_file @{ path = 'must-not-write.txt'; content = 'unexpected' }))
     Assert-Throws { Invoke-AgentTurn $Session 'Stop on a log failure.' 2 } '*Trajectory*'
     $hung = Read-ParallelTrace 'read_file-hang-log.txt' start
     Assert-True ($Session.LogFailed -and -not (Get-Process -Id $hung.pid -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath (Join-Path $WorkRoot 'must-not-write.txt'))) 'Kill concurrent reads and block a following write after logging fails.'
