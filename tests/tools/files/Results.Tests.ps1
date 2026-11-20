@@ -60,8 +60,7 @@ try {
     }
     Assert-Throws { Invoke-FlintFileTool $Session.Root read_file @{ path = $saved.result_path; start_line = 1; start_column = 1; max_lines = 200 } @() -SessionId $otherId } '*protected*'
     Write-FlintCheckpoint $Session
-    Push-Location -LiteralPath $WorkRoot
-    try { $resumed = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
+    $resumed = New-TestSession -Resume $Session.Id
     $page = Invoke-FlintFileTool $resumed.Root read_file @{ path = $saved.result_path; start_line = $tailLine; start_column = 1; max_lines = 20 } $resumed.ProtectedPaths -SessionId $resumed.Id
     Assert-True ($page.status -eq 'ok' -and $page.output.Contains('nextLink')) 'Resume can read saved results from the same session directory.'
     $missing = Invoke-TestTool read_file @{ path = (Join-Path (Split-Path $saved.result_path -Parent) ([guid]::NewGuid().ToString('N') + '.json')) }

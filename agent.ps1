@@ -46,8 +46,14 @@ if ($MyInvocation.InvocationName -ne '.') {
                 foreach ($plugin in @($checked.plugins)) { Show-FlintPluginSummary $plugin }
             } else {
                 # Each step already reported its outcome; finish with what to do next.
-                $null = Install-FlintSetup $Setup
-                Write-Host 'Setup complete. Start Flint with:' -ForegroundColor Green
+                $installed = Install-FlintSetup $Setup
+                if ($installed.key_kept) {
+                    Write-Host 'Setup complete. The API key in flint.ini was kept. Start Flint with:' -ForegroundColor Green
+                } else {
+                    Write-Host 'Setup complete. Set the API key in flint.ini before starting Flint:' -ForegroundColor Green
+                    if ($installed.setup.model.ApiKeyHelp) { Write-Host ('  ' + $installed.setup.model.ApiKeyHelp) -ForegroundColor Yellow }
+                    Write-Host ('  Paste the key after "api_key =" in ' + $installed.config + '. Then start Flint with:')
+                }
                 Write-Host ("  & '" + $PSCommandPath.Replace("'", "''") + "'")
             }
             exit 0
@@ -69,13 +75,13 @@ if ($MyInvocation.InvocationName -ne '.') {
         Initialize-FlintAzure $session
         if ($session.ResumedFrom) { Show-FlintHistory $session }
         if ($Prompt) {
-            $answer = Invoke-AgentTurn -Session $session -UserPrompt $Prompt -TurnLimit $MaxTurns
+            $answer = Invoke-AgentTurn -Session $session -UserPrompt $Prompt
             if ($null -ne $answer) { Show-FlintAnswer $session $answer }
         } else {
             while ($true) {
                 $userPrompt = Read-FlintPrompt $session
                 if ($null -eq $userPrompt -or $userPrompt -in @('exit', 'quit', '/exit')) { break }
-                if ($userPrompt -eq '/help') { Show-FlintHelp $session; continue }
+                if ($userPrompt -eq '/help') { Show-FlintHelp; continue }
                 if ($userPrompt -eq '/status') { Show-FlintSession $session -Details; continue }
                 if ([string]::IsNullOrWhiteSpace($userPrompt)) { continue }
                 if ($userPrompt -in @('/c', '/continue')) {
@@ -83,7 +89,7 @@ if ($MyInvocation.InvocationName -ne '.') {
                     $userPrompt = Get-FlintContinuePrompt
                 } elseif ($userPrompt.StartsWith('/')) { Write-Host 'Unknown command. Use /help.' -ForegroundColor Yellow; continue }
                 try {
-                    $answer = Invoke-AgentTurn -Session $session -UserPrompt $userPrompt -TurnLimit $MaxTurns
+                    $answer = Invoke-AgentTurn -Session $session -UserPrompt $userPrompt
                     if ($null -ne $answer) { Show-FlintAnswer $session $answer }
                 } catch {
                     Show-FlintError $session $_.Exception.Message

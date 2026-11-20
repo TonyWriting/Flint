@@ -77,7 +77,7 @@ try {
     Reset-AzureFixture
     $script:CliFailure = "OSError: 'run_module' is disabled by policy"
     Initialize-FlintAzure $Session
-    $initialization = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ } | Where-Object { $_.event -eq 'azure_initialized' })[-1]
+    $initialization = @(Get-TestEvents | Where-Object { $_.event -eq 'azure_initialized' })[-1]
     Assert-True ($initialization.data.message.Contains('disabled by policy') -and $initialization.data.failure.message.Contains('disabled by policy') -and $initialization.data.failure.error_id -and $initialization.data.failure.exception_type -and $initialization.data.failure.script_stack_trace) 'Persist the initialization failure reason and its exception context.'
     Assert-True ($Session.Azure.Status -eq 'unavailable' -and $LoginCalls -eq 0 -and $Session.Azure.Message.Contains('run_module')) 'Report CLI execution policy errors.'
 

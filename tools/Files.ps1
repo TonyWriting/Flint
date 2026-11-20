@@ -83,18 +83,16 @@ function Invoke-FlintFileTool {
             }
             default { throw 'Unknown file tool.' }
         }
-        if ($Name -in @('write_file', 'edit_file')) {
-            if ($updated.Length -gt 65536) { throw 'Written content exceeds 64 Ki characters.' }
-            if ($updated.Contains([string][char]0)) { throw 'Binary content is not supported.' }
-            $null = Resolve-FlintFileTarget $Root $Name $ToolArguments $ProtectedPaths
-            try {
-                Set-Content -LiteralPath $path -Value $updated -Encoding UTF8 -NoNewline -ErrorAction Stop
-                $verified = [string](Get-Content -LiteralPath $path -Raw -Encoding UTF8 -ErrorAction Stop)
-                if ($null -eq $verified) { $verified = '' }
-            } catch { throw ('Write could not be verified. Read the actual file before another edit. ' + $_.Exception.Message) }
-            if ($verified -cne $updated) { throw 'Write verification failed. Read the actual file before proposing another edit.' }
-            $output = 'File written and verified: ' + $ToolArguments.path
-        }
+        if ($updated.Length -gt 65536) { throw 'Written content exceeds 64 Ki characters.' }
+        if ($updated.Contains([string][char]0)) { throw 'Binary content is not supported.' }
+        $null = Resolve-FlintFileTarget $Root $Name $ToolArguments $ProtectedPaths
+        try {
+            Set-Content -LiteralPath $path -Value $updated -Encoding UTF8 -NoNewline -ErrorAction Stop
+            $verified = [string](Get-Content -LiteralPath $path -Raw -Encoding UTF8 -ErrorAction Stop)
+            if ($null -eq $verified) { $verified = '' }
+        } catch { throw ('Write could not be verified. Read the actual file before another edit. ' + $_.Exception.Message) }
+        if ($verified -cne $updated) { throw 'Write verification failed. Read the actual file before proposing another edit.' }
+        $output = 'File written and verified: ' + $ToolArguments.path
     }
     return @{ status = 'ok'; exit_code = 0; output = $output; retryable = $false; duration_ms = 0 }
 }

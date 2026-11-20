@@ -1,14 +1,3 @@
-function Assert-FlintPermissionPath {
-    param([string]$Path)
-    $current = $Path
-    while ($current) {
-        if (Test-Path -LiteralPath $current) {
-            $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
-            if ($item.PSProvider.Name -ne 'FileSystem' -or ($item.Attributes -band 1024)) { throw 'Permission files cannot use symlinks or junctions.' }
-        }
-        $current = Split-Path $current -Parent
-    }
-}
 
 function Assert-FlintCommandRuleScope {
     param($Rule)
@@ -101,7 +90,7 @@ function ConvertTo-FlintCommandRules {
 
 function Read-FlintCommandRuleFile {
     param([string]$Path, [string]$Executor, [string]$Source)
-    Assert-FlintPermissionPath $Path
+    Assert-FlintNoLinkInPath $Path 'Permission rules cannot use symlinks or junctions.'
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw ('Permission rules were not found: ' + $Path) }
     if ((Get-Item -LiteralPath $Path).Length -gt 262144) { throw 'Permission rules exceed 256 KiB.' }
     try { $document = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop }
@@ -143,14 +132,6 @@ function Test-FlintCommandRule {
     return $true
 }
 
-function Get-FlintApprovalFile {
-    param([hashtable]$Session, [string]$Executor)
-    if ($Session.Id -cnotmatch '^[a-f0-9]{32}$' -or $Executor -cnotin @('azure', 'kubectl', 'files')) { throw 'Invalid session authorization identity.' }
-    $path = Join-Path (Join-Path $Session.PermissionSessionDirectory $Session.Id) ($Executor + '.json')
-    Assert-FlintPermissionPath $path
-    return $path
-}
-
 function Get-FlintReadOnlyRuleSource {
     param([hashtable]$Session, $Invocation)
     # Rules are validated once at session start; the source names the core set or the plugin that supplied the match.
@@ -158,54 +139,6 @@ function Get-FlintReadOnlyRuleSource {
         if ($entry -and (Test-FlintCommandRule $entry.rule $Invocation.arguments)) { return $entry.source }
     }
     return $null
-}
-
-function Read-FlintCommandApprovals {
-    param([hashtable]$Session, [string]$Executor)
-    $path = Get-FlintApprovalFile $Session $Executor
-    if (-not (Test-Path -LiteralPath $path)) { return @() }
-    if ((Get-Item -LiteralPath $path).Length -gt 1048576) { throw 'Session authorizations exceed 1 MiB.' }
-    $document = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $path -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
-    if ($document.version -ne 1 -or $document.session_id -cne $Session.Id -or $document.executor -cne $Executor -or $document.calls -isnot [array]) {
-        throw 'Invalid session authorization file.'
-    }
-    return @($document.calls)
-}
-
-function Save-FlintCommandApproval {
-    param([hashtable]$Session, $Invocation)
-    $calls = @(Read-FlintCommandApprovals $Session $Invocation.executor)
-    $calls += $Invocation
-    Write-FlintPermissionFile $Session $Invocation.executor ([ordered]@{ version = 1; session_id = $Session.Id; executor = $Invocation.executor; calls = $calls })
-}
-
-function Write-FlintPermissionFile {
-    param([hashtable]$Session, [string]$Executor, $Document)
-    $json = ConvertTo-Json -InputObject $Document -Depth 16
-    if ($json.Length -gt 131072) { throw 'Session authorization limit reached.' }
-    $path = Get-FlintApprovalFile $Session $Executor
-    $directory = Split-Path $path -Parent
-    New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
-    Assert-FlintPermissionPath $path
-    $temporary = Join-Path $directory ([guid]::NewGuid().ToString('N') + '.tmp')
-    try {
-        Set-Content -LiteralPath $temporary -Value $json -Encoding UTF8 -ErrorAction Stop
-        Move-Item -LiteralPath $temporary -Destination $path -Force -ErrorAction Stop
-    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
-}
-
-function Read-FlintDirectoryApprovals {
-    param([hashtable]$Session)
-    $path = Get-FlintApprovalFile $Session files
-    if (-not (Test-Path -LiteralPath $path)) { return @() }
-    if ((Get-Item -LiteralPath $path).Length -gt 1048576) { throw 'Directory authorizations exceed 1 MiB.' }
-    $document = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $path -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
-    if ($document.version -ne 1 -or $document.session_id -cne $Session.Id -or $document.directories -isnot [array]) { throw 'Invalid directory authorization file.' }
-    foreach ($directory in $document.directories) {
-        if ($directory -isnot [string] -or $directory -notmatch '^[A-Za-z]:\\') { throw 'Directory authorizations must use absolute local paths.' }
-        Assert-FlintFilePathText $directory
-    }
-    return @($document.directories)
 }
 
 function Read-FlintDirectoryApproval {
@@ -225,8 +158,7 @@ function Resolve-FlintFilePermission {
     if (Test-FlintPathWithinDirectory $target $Session.Root) {
         return @{ allowed = $true; read_only = $false; directory = $Session.Root }
     }
-    $directories = @(Read-FlintDirectoryApprovals $Session)
-    foreach ($directory in $directories) {
+    foreach ($directory in @($Session.Approvals.files)) {
         if (Test-FlintPathWithinDirectory $target $directory) {
             Write-FlintEvent $Session 'directory_permission' @{ call_id = $CallId; directory = $directory; target = $target }
             return @{ allowed = $true; read_only = $false; directory = $directory }
@@ -238,10 +170,7 @@ function Resolve-FlintFilePermission {
     $answer = Read-FlintDirectoryApproval $Session $directory $target $Name
     $allowed = $null -ne $answer -and $answer.Trim() -ceq 'y'
     Write-FlintEvent $Session 'directory_approval_decided' @{ call_id = $CallId; directory = $directory; allowed = $allowed }
-    if ($allowed) {
-        $directories += $directory
-        Write-FlintPermissionFile $Session files ([ordered]@{ version = 1; session_id = $Session.Id; directories = $directories })
-    }
+    if ($allowed) { $Session.Approvals.files = @($Session.Approvals.files) + $directory }
     $status = 'denied'
     if ($null -eq $answer) { $status = 'approval_required' }
     return @{ allowed = $allowed; read_only = $false; directory = $directory; status = $status }
@@ -272,18 +201,22 @@ function Resolve-FlintCommandPermission {
         Write-FlintEvent $Session 'command_permission' @{ call_id = $CallId; source = 'fixed_read'; rule_source = $ruleSource; invocation = $Invocation }
         return @{ allowed = $true; read_only = $true; source = 'fixed_read'; rule_source = $ruleSource }
     }
+    return Resolve-FlintSessionApproval $Session $Invocation $CallId $Purpose command Read-FlintCommandApproval
+}
+
+function Resolve-FlintSessionApproval {
+    param([hashtable]$Session, $Invocation, [string]$CallId, [string]$Purpose, [string]$Kind, [string]$Prompt)
+    # An approval covers one exact invocation and lasts only as long as this Flint process.
     $signature = ConvertTo-Json -InputObject $Invocation -Depth 16 -Compress
-    foreach ($approved in @(Read-FlintCommandApprovals $Session $Invocation.executor)) {
-        if ((ConvertTo-Json -InputObject $approved -Depth 16 -Compress) -ceq $signature) {
-            Write-FlintEvent $Session 'command_permission' @{ call_id = $CallId; source = 'session_exact'; invocation = $Invocation }
-            return @{ allowed = $true; read_only = $false; source = 'session_exact' }
-        }
+    if (@($Session.Approvals[$Invocation.executor]) -ccontains $signature) {
+        Write-FlintEvent $Session ($Kind + '_permission') @{ call_id = $CallId; source = 'session_exact'; invocation = $Invocation }
+        return @{ allowed = $true; read_only = $false; source = 'session_exact' }
     }
-    Write-FlintEvent $Session 'command_approval_requested' @{ call_id = $CallId; invocation = $Invocation; purpose = $Purpose }
-    $answer = Read-FlintCommandApproval $Session $Invocation -Purpose $Purpose
+    Write-FlintEvent $Session ($Kind + '_approval_requested') @{ call_id = $CallId; invocation = $Invocation; purpose = $Purpose }
+    $answer = & $Prompt $Session $Invocation -Purpose $Purpose
     $allowed = $null -ne $answer -and $answer.Trim() -ceq 'y'
-    Write-FlintEvent $Session 'command_approval_decided' @{ call_id = $CallId; allowed = $allowed }
-    if ($allowed) { Save-FlintCommandApproval $Session $Invocation }
+    Write-FlintEvent $Session ($Kind + '_approval_decided') @{ call_id = $CallId; allowed = $allowed }
+    if ($allowed) { $Session.Approvals[$Invocation.executor] = @($Session.Approvals[$Invocation.executor]) + $signature }
     $status = 'denied'
     if ($null -eq $answer) { $status = 'approval_required' }
     return @{ allowed = $allowed; read_only = $false; source = 'user'; status = $status }

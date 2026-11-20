@@ -25,7 +25,7 @@ try {
 function Invoke-RestMethod {
     param($Method, $Uri, $Headers, $TimeoutSec, $MaximumRedirection, $ErrorAction, $ContentType, $Body, $OutFile)
     if ($Method -ne 'Post' -or $Uri -ne 'https://test.services.ai.azure.com/openai/v1/responses' -or $Headers.Authorization -cne 'Bearer test-api-key') { throw 'Incorrect HTTP authentication or endpoint.' }
-    if ((Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:AZURE_OPENAI_API_KEY)) { throw 'Worker authentication must be removed from its environment.' }
+    if (Test-Path Env:FLINT_MODEL_API_KEY) { throw 'Worker authentication must be removed from its environment.' }
     if ($Body.Contains('test-api-key')) { throw 'Model credentials appeared in the request payload.' }
     if ($MaximumRedirection -ne 0 -or $TimeoutSec -le 0 -or $ContentType -ne 'application/json; charset=utf-8') { throw 'Incorrect HTTP request options.' }
     $metadata = @{ request_path = $RequestPath; response_path = $OutFile; language_mode = [string]$ExecutionContext.SessionState.LanguageMode }
@@ -38,7 +38,9 @@ function Invoke-RestMethod {
     if ($request.input -eq 'slow') { Start-Sleep -Seconds 2 }
     if ($request.input -eq 'failure' -or ($request.input -eq 'recover' -and $count -eq 0)) {
         try { throw 'Rejected test-api-key' } catch { $errorObject = $_.Exception }
-        $errorObject | Add-Member -NotePropertyName Response -NotePropertyValue @{ StatusCode = 429 } -Force
+        $status = 429
+        if ($request.input -eq 'failure') { $status = 401 }
+        $errorObject | Add-Member -NotePropertyName Response -NotePropertyValue @{ StatusCode = $status } -Force
         throw $errorObject
     }
     if ($request.input -eq 'malformed') { Set-Content -LiteralPath $OutFile -Value '{broken' -Encoding UTF8; return }
@@ -58,12 +60,12 @@ function Invoke-RestMethod {
     foreach ($path in @($observed.request_path, $observed.response_path, ($observed.response_path + '.error'))) {
         Assert-True (-not (Test-Path -LiteralPath $path)) 'Clean up request, response and error files.'
     }
-    # Four worker starts plus 7 seconds of backoff must fit inside the request deadline on slow hosts.
-    $Session.RequestTimeoutSec = 60
-    Assert-Throws { Invoke-TestModel 'failure' } '*HTTP 429*Rejected*redacted*'
-    Assert-True ([int](Get-Content -LiteralPath (Join-Path $fixture 'failure.count')) -eq 4) 'Carry retryable HTTP status across the worker boundary and stop after four attempts.'
+    # Two worker starts plus one second of backoff must fit inside the request deadline on slow hosts.
+    $Session.RequestTimeoutSec = 30
+    Assert-Throws { Invoke-TestModel 'failure' } '*HTTP 401*Rejected*redacted*'
+    Assert-True ([int](Get-Content -LiteralPath (Join-Path $fixture 'failure.count')) -eq 1) 'Carry a redacted HTTP failure across the worker boundary without retrying an authentication error.'
     $response = Invoke-TestModel 'recover'
-    Assert-True ($response.status -eq 'completed' -and [int](Get-Content -LiteralPath (Join-Path $fixture 'recover.count')) -eq 2) 'Recover from a transient worker HTTP failure.'
+    Assert-True ($response.status -eq 'completed' -and [int](Get-Content -LiteralPath (Join-Path $fixture 'recover.count')) -eq 2) 'Carry a retryable HTTP status across the worker boundary and recover.'
     Assert-True (@($script:Frames | Where-Object { $_ -like '*Retrying model (1/3) in 1s*' }).Count -gt 0) 'Show retries while the elapsed-time display remains active.'
     Assert-Throws { Invoke-TestModel 'malformed' } '*Azure OpenAI request failed*'
     Assert-True ([int](Get-Content -LiteralPath (Join-Path $fixture 'malformed.count')) -eq 1) 'Do not retry a successful HTTP response with invalid JSON.'

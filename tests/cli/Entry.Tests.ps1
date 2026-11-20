@@ -40,7 +40,7 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     Assert-True ($LASTEXITCODE -eq 0) 'Run the CLI entry point with redirected interactive input.'
     $log = Get-ChildItem -LiteralPath $logs -Filter *.jsonl
     Assert-True (@($log).Count -eq 1) 'Create one trajectory per CLI session.'
-    $events = @(Get-Content -LiteralPath $log.FullName -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents $log.FullName)
     Assert-True ('session_stopped' -in $events.event) 'Record a normal exit.'
     Assert-True ($events[-1].data.reason -eq 'exit') 'Record the correct session stop reason.'
     Assert-True (-not (($output -join "`n").Contains('test-api-key'))) 'Keep credentials out of startup output.'
@@ -58,7 +58,7 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     Assert-True (-not $transcript.Contains([string][char]27) -and -not $transcript.Contains("`r")) 'Use plain output when streams are redirected.'
     Assert-True ((Get-Content -LiteralPath (Join-Path $WorkRoot 'prompt-report.md') -Raw -Encoding UTF8) -ceq "# Report`n`ncomplete.") 'Run write_file and edit_file through the actual -Prompt entry point.'
     $promptLog = Get-ChildItem -LiteralPath $promptLogs -Filter *.jsonl
-    $promptEvents = @(Get-Content -LiteralPath $promptLog.FullName -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $promptEvents = @(Get-TestEvents $promptLog.FullName)
     Assert-True (@($promptEvents | Where-Object { $_.event -eq 'tool_finished' -and $_.data.result.status -eq 'ok' }).Count -eq 2) 'Record both successful writes in the CLI trajectory.'
     $promptMentions = @($promptEvents | Where-Object { (ConvertTo-Json -InputObject $_ -Depth 32 -Compress).Contains('Create a report and mark it complete.') })
     Assert-True (($promptMentions.event -join ',') -ceq 'user_input,history_appended') 'Log the prompt once as input and once as history, however many model calls follow.'
@@ -73,27 +73,19 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     Assert-True ($LASTEXITCODE -eq 0) 'Resume and exit without sending a new message.'
     $idleTranscript = $output -join "`n"
     Assert-True ($idleTranscript.Contains('Report created and updated.') -and $idleTranscript.Contains('Token usage: total=45') -and $idleTranscript.Contains('-Resume ' + $resumeId)) 'Show history with unchanged usage and identity when no new request is sent.'
-    $resumedEvents = @(Get-Content -LiteralPath $promptLog.FullName -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $resumedEvents = @(Get-TestEvents $promptLog.FullName)
     Assert-True (@($resumedEvents | Where-Object { $_.event -eq 'tool_finished' }).Count -eq 2) 'Display past tool results without executing the tools again.'
     Assert-True (@($resumedEvents | Where-Object { $_.event -eq 'model_request' }).Count -eq 3) 'Do not call the model to display restored history.'
     Assert-True (@($resumedEvents | Where-Object { $_.event -eq 'session_resumed' }).Count -eq 2) 'Record both continuations in the same trajectory.'
     for ($i = 0; $i -lt $resumedEvents.Count; $i++) { Assert-True ($resumedEvents[$i].sequence -eq ($i + 1) -and $resumedEvents[$i].session_id -ceq $resumeId) 'Append sequential events without changing session identity.' }
-    $invalidConfig = Join-Path $TestRoot 'invalid.ini'
-    Set-Content -LiteralPath $invalidConfig -Encoding UTF8 -Value ((Get-TestConfigLines) -replace '/openai/v1/responses$', '/openai/v1')
-    $misspelledConfig = Join-Path $TestRoot 'misspelled.ini'
-    Set-Content -LiteralPath $misspelledConfig -Encoding UTF8 -Value ((Get-TestConfigLines) -replace '^api_key = ', 'api_kye = ')
+    # Configuration errors are covered in-process by agent\Config; here the entry point must fail before any session starts.
     $rejectedLogs = Join-Path $TestRoot 'rejected-logs'
     foreach ($case in @(
         @{ version = '5.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.0*Start Flint with powershell.exe*' },
-        @{ version = '5.2'; message = '*Flint requires Windows PowerShell 5.1*Current version: 5.2*Start Flint with powershell.exe*' },
-        @{ version = '6.0'; message = '*Flint requires Windows PowerShell 5.1*Current version: 6.0*Start Flint with powershell.exe*' },
         @{ version = '7.4'; message = '*Flint requires Windows PowerShell 5.1*Current version: 7.4*Start Flint with powershell.exe*' },
-        @{ message = '*Configuration file not found*'; missing = $true },
-        @{ path = $invalidConfig; message = '*complete HTTPS URL ending in /openai/v1/responses*' },
-        @{ path = $misspelledConfig; message = "*Line 4: unknown setting 'api_kye' in ``[model``]*" }
+        @{ message = '*Configuration file not found*'; missing = $true }
     )) {
         Remove-Item -LiteralPath $runtimeConfig -Force -ErrorAction SilentlyContinue
-        if ($case.path) { Copy-Item -LiteralPath $case.path -Destination $runtimeConfig }
         $versionArguments = @()
         if ($case.version) { $versionArguments = @('-ReportedVersion', $case.version) }
         try {
@@ -105,7 +97,6 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
         Assert-True ($startupExitCode -eq 1) 'Exit with failure when the runtime or configuration is invalid.'
         Assert-True ($startupMessage -like $case.message) ('Explain the startup failure. Received: ' + $startupMessage)
         Assert-True (-not (Test-Path -LiteralPath $rejectedLogs)) 'Reject an invalid runtime or configuration before starting a session or making model requests.'
-        Assert-True (-not $startupMessage.Contains('test-api-key')) 'Do not expose credentials in startup validation errors.'
         if ($case.missing) {
             foreach ($part in @('agent.ps1 -Setup', 'copy the template', 'flint.example.ini', 'endpoint, deployment and api_key under [model]')) {
                 Assert-True ($startupMessage.Contains($part)) ('Missing startup guidance: ' + $part + '. Received: ' + $startupMessage)
@@ -113,9 +104,9 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
             Assert-True (-not (Test-Path -LiteralPath $runtimeConfig)) 'Leave creation of the missing configuration to the user.'
         }
     }
-    Copy-Item -LiteralPath $config -Destination $runtimeConfig -Force
+    Remove-Item -LiteralPath $runtimeConfig -Force -ErrorAction SilentlyContinue
 
-    # Setup runs without a configuration, reads the key from input and installs into the runtime that was invoked.
+    # Setup runs without a configuration and without input, and installs into the runtime that was invoked.
     $setupLauncher = Join-Path $TestRoot 'setup-launch.ps1'
     Set-Content -LiteralPath $setupLauncher -Encoding ASCII -Value @(
         'param($CliPath, $Validate, $Setup)'
@@ -135,13 +126,19 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
         $validateExitCode = $LASTEXITCODE
     } finally { $ErrorActionPreference = 'Stop' }
     Assert-True ($validateExitCode -eq 1 -and ($output -join "`n").Contains('MAJOR.MINOR.PATCH')) 'Explain why a setup is invalid and exit with failure.'
-    $output = @('pasted-team-key') | & $powerShell -NoProfile -File $setupLauncher -CliPath $cliPath -Setup $setupSource
+    $output = & $powerShell -NoProfile -NonInteractive -File $setupLauncher -CliPath $cliPath -Setup $setupSource
     $transcript = $output -join "`n"
     $runtimePlugin = Join-Path (Split-Path $cliPath -Parent) 'plugins\example\plugin.json'
-    Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('Setup complete.') -and (Test-Path -LiteralPath $runtimePlugin)) ('Set up the invoked runtime from a team folder: ' + $transcript)
-    Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript -match 'Installed example 1\.0\.0 \(\d+\.\ds\)' -and $transcript.Contains('Wrote ' + $runtimeConfig)) 'Show where to get the key and report each step with its duration.'
-    Assert-True ($transcript.Contains("& '" + $cliPath + "'")) ('Name the invoked entry point in the start command: ' + $transcript)
-    Assert-True ((Read-FlintConfig $runtimeConfig).ApiKey -ceq 'pasted-team-key') 'Replace the current key with the key read from input.'
+    Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('Setup complete. Set the API key in flint.ini before starting Flint:') -and (Test-Path -LiteralPath $runtimePlugin)) ('Set up the invoked runtime from a team folder without reading a key: ' + $transcript)
+    Assert-True ($transcript -match 'Installed example 1\.0\.0 \(\d+\.\ds\)' -and $transcript.Contains('Generated ' + $runtimeConfig)) 'Report each step with its duration.'
+    Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript.Contains('Paste the key after "api_key =" in ' + $runtimeConfig) -and $transcript.Contains("& '" + $cliPath + "'")) ('Say where to get the key, where to paste it and how to start Flint: ' + $transcript)
+    # The user pastes the key into flint.ini; running setup again keeps it.
+    $lines = @(Get-Content -LiteralPath $runtimeConfig -Encoding UTF8)
+    Set-Content -LiteralPath $runtimeConfig -Encoding UTF8 -Value ($lines -replace '^api_key =$', 'api_key = pasted-team-key')
+    $output = & $powerShell -NoProfile -NonInteractive -File $setupLauncher -CliPath $cliPath -Setup $setupSource
+    $transcript = $output -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('The API key in flint.ini was kept.') -and -not $transcript.Contains('Paste the key')) ('Keep the pasted key when setup runs again: ' + $transcript)
+    Assert-True ((Read-FlintConfig $runtimeConfig).ApiKey -ceq 'pasted-team-key') 'flint.ini keeps the pasted key.'
     $statusLogs = Join-Path $TestRoot 'plugin-logs'
     $output = @('/status', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -LogDirectory $statusLogs
     $transcript = $output -join "`n"

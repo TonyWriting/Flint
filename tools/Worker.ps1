@@ -3,7 +3,6 @@ param([Parameter(Mandatory = $true)][string]$RequestPath)
 $ErrorActionPreference = 'Stop'
 $azureAccessToken = $env:FLINT_AZURE_ACCESS_TOKEN
 Remove-Item -LiteralPath Env:FLINT_AZURE_ACCESS_TOKEN -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath Env:AZURE_OPENAI_API_KEY -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath Env:FLINT_MODEL_API_KEY -ErrorAction SilentlyContinue
 foreach ($file in @('Security', 'Telemetry', 'Runtime', 'Results')) {
     . (Join-Path (Split-Path $PSScriptRoot -Parent) ('lib\' + $file + '.ps1'))

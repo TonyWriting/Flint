@@ -24,7 +24,7 @@ try {
     $target = Join-Path $outside 'output.txt'
     $script:Answers = @('n')
     Assert-True ((Invoke-TestTool write_file @{ path = $target; content = 'denied' }).status -eq 'denied') 'Decline external writes before worker execution.'
-    Assert-True (-not (Test-Path -LiteralPath $target) -and -not (Test-Path -LiteralPath (Get-FlintApprovalFile $Session files))) 'Declining neither modifies files nor saves authorization.'
+    Assert-True (-not (Test-Path -LiteralPath $target) -and @($Session.Approvals.files).Count -eq 0) 'Declining neither modifies files nor saves authorization.'
     $script:Answers = @('y')
     Assert-True ((Invoke-TestTool write_file @{ path = $target; content = 'first' }).status -eq 'ok') 'Authorize and perform an external write.'
     Assert-True ($AskedDirectories[-1] -ceq $outside) 'Request permission for the containing directory, not the whole drive.'
@@ -38,12 +38,13 @@ try {
     Assert-True ((Invoke-TestTool write_file @{ path = '..\outside-other\blocked.txt'; content = 'blocked' }).status -eq 'denied') 'Directory matching respects path boundaries and normalized traversal.'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $sibling 'blocked.txt'))) 'Do not authorize similarly prefixed sibling directories.'
 
-    $originalId = $Session.Id
-    $Session.Id = [guid]::NewGuid().ToString('N'); $script:Answers = @('n')
-    Assert-True ((Invoke-TestTool write_file @{ path = $target; content = 'new session' }).status -eq 'denied') 'A new session cannot reuse directory authorization.'
+    # Directory grants live in memory, so a new Flint process, including -Resume, starts without them.
+    $granted = $Session.Approvals.files
+    $Session.Approvals.files = @(); $script:Answers = @('n')
+    Assert-True ((Invoke-TestTool write_file @{ path = $target; content = 'new session' }).status -eq 'denied') 'A new Flint process cannot reuse directory authorization.'
     Assert-True ((Get-Content -LiteralPath $target -Raw -Encoding UTF8) -ceq 'updated') 'Denied writes preserve existing content.'
-    $Session.Id = $originalId
-    Assert-True ((Invoke-TestTool write_file @{ path = $target; content = 'resumed' }).status -eq 'ok') 'The same session can reload directory authorization.'
+    $Session.Approvals.files = $granted
+    Assert-True ((Invoke-TestTool write_file @{ path = $target; content = 'resumed' }).status -eq 'ok') 'Directory authorization lasts for the rest of the process.'
     $newDirectory = Join-Path $TestRoot 'new-output'
     $script:Answers = @('y')
     Assert-True ((Invoke-TestTool create_directory @{ path = $newDirectory }).status -eq 'ok' -and $AskedDirectories[-1] -ceq $newDirectory) 'Creating an external directory authorizes that directory and its descendants.'
@@ -52,10 +53,6 @@ try {
     Assert-True ((Invoke-TestTool write_file @{ path = (Join-Path $outside '.env'); content = 'forbidden' }).status -eq 'error') 'Directory consent never bypasses credential protection.'
     Assert-Throws { Invoke-FlintFileTool $WorkRoot write_file @{ path = (Join-Path $sibling 'direct.txt'); content = 'forbidden' } @() } '*requires directory authorization*'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $sibling 'direct.txt'))) 'The worker also requires an external write directory.'
-    $permissionFile = Get-FlintApprovalFile $Session files
-    Set-Content -LiteralPath $permissionFile -Value '{broken' -Encoding UTF8
-    Assert-True ((Invoke-TestTool write_file @{ path = $target; content = 'broken cache' }).status -eq 'error') 'Malformed directory grants fail closed.'
-    Remove-Item -LiteralPath $permissionFile -Force
     . (Join-Path $RepoRoot 'lib\Permissions.ps1')
     $Session.Ui.Live = $false
     Assert-True ((Invoke-TestTool create_directory @{ path = (Join-Path $TestRoot 'no-terminal') }).status -eq 'approval_required') 'Noninteractive directory creation requires prior authorization.'

@@ -79,8 +79,14 @@ function ConvertTo-FlintModelConfig {
     # Shared by flint.ini and team setup templates; a template leaves the key to each user.
     $required = @('endpoint', 'deployment')
     if (-not $WithoutKey) { $required += 'api_key' }
+    $help = [string]$Values['model.api_key_help']
     foreach ($name in $required) {
-        if ([string]::IsNullOrWhiteSpace($Values['model.' + $name])) { throw ('Set ' + $name + ' under [model].') }
+        if ([string]::IsNullOrWhiteSpace($Values['model.' + $name])) {
+            $message = 'Set ' + $name + ' under [model].'
+            # A missing key is the usual first-run gap after -Setup, so point at where to get one.
+            if ($name -ceq 'api_key' -and $help) { $message += ' ' + $help }
+            throw $message
+        }
     }
     $apiEndpoint = $Values['model.endpoint']
     $apiUri = $apiEndpoint -as [uri]
@@ -88,7 +94,6 @@ function ConvertTo-FlintModelConfig {
         -not $apiUri.Host -or $apiUri.UserInfo -or $apiUri.Query -or $apiUri.Fragment -or $apiUri.AbsolutePath -cne '/openai/v1/responses') {
         throw 'endpoint under [model] must be a complete HTTPS URL ending in /openai/v1/responses, without credentials, query or fragment.'
     }
-    $help = [string]$Values['model.api_key_help']
     if ($help.Length -gt 400) { throw 'api_key_help under [model] is limited to 400 characters.' }
     return @{ ApiEndpoint = $apiEndpoint; Model = $Values['model.deployment']; ApiKey = [string]$Values['model.api_key']; ApiKeyHelp = $help }
 }

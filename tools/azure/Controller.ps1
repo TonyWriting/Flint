@@ -112,18 +112,7 @@ function Resolve-FlintAzurePermission {
         Write-FlintEvent $Session 'azure_permission' @{ call_id = $CallId; source = $readOnlyRule; invocation = $Invocation }
         return @{ allowed = $true; read_only = $true }
     }
-    $signature = ConvertTo-Json -InputObject $Invocation -Depth 16 -Compress
-    foreach ($approved in @(Read-FlintCommandApprovals $Session azure)) {
-        if ((ConvertTo-Json -InputObject $approved -Depth 16 -Compress) -ceq $signature) { return @{ allowed = $true; read_only = $false } }
-    }
-    Write-FlintEvent $Session 'azure_approval_requested' @{ call_id = $CallId; invocation = $Invocation; purpose = $Purpose }
-    $answer = Read-FlintAzureApproval $Session $Invocation -Purpose $Purpose
-    $allowed = $null -ne $answer -and $answer.Trim() -ceq 'y'
-    Write-FlintEvent $Session 'azure_approval_decided' @{ call_id = $CallId; allowed = $allowed }
-    if ($allowed) { Save-FlintCommandApproval $Session $Invocation }
-    $status = 'denied'
-    if ($null -eq $answer) { $status = 'approval_required' }
-    return @{ allowed = $allowed; read_only = $false; status = $status }
+    return Resolve-FlintSessionApproval $Session $Invocation $CallId $Purpose azure Read-FlintAzureApproval
 }
 
 function Invoke-FlintAzureRequest {

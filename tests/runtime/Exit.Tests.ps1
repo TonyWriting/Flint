@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-param([ValidateSet('Model', 'Prompt', 'Retry', 'Completed')][string]$During = 'Model')
+param([ValidateSet('Model', 'Retry', 'Completed')][string]$During = 'Model')
 $ErrorActionPreference = 'Stop'
 # Exercise pipeline cancellation. Use Preview.Exit.ps1 for actual ConsoleHost Ctrl+C events.
 $testParent = (Get-Item -LiteralPath $env:TEMP -Force).FullName.TrimEnd('\')
@@ -86,7 +86,6 @@ else { & $AgentPath -NoAzure }
     }
     $transcript = @($driver.Streams.Information | ForEach-Object { [string]$_.MessageData }) -join "`n"
     $expectedUsage = 'Token usage: not reported'
-    if ($During -eq 'Prompt') { $expectedUsage = 'Token usage: total=0 input=0 output=0' }
     if ($During -eq 'Completed') { $expectedUsage = 'Token usage: total=1,290 input=1,234 output=56' }
     if (-not $transcript.Contains($expectedUsage) -or -not $transcript.Contains('-Resume ')) { throw ('CLI cancellation did not show an honest exit summary and resume command: ' + $transcript) }
     if ($transcript.Contains('test-api-key')) { throw 'The exit summary leaked credentials.' }
@@ -96,9 +95,8 @@ else { & $AgentPath -NoAzure }
     $checkpoint = @($events | Where-Object { $_.event -eq 'session_checkpoint' })[-1]
     $saved = @($events | Where-Object { $_.event -eq 'history_appended' } | ForEach-Object { $_.data.items })
     if ($checkpoint.data.history_count -ne $saved.Count) { throw 'The exit checkpoint does not match the saved conversation.' }
-    if ($During -ne 'Prompt' -and $saved[0].content -ne 'Wait for the model.') { throw 'The exit checkpoint lost the interrupted request.' }
+    if ($saved[0].content -ne 'Wait for the model.') { throw 'The exit checkpoint lost the interrupted request.' }
     if ($During -eq 'Retry' -and @($events | Where-Object { $_.event -eq 'model_request' }).Count -ne 1) { throw 'Cancellation during backoff sent another request.' }
-    if ($During -eq 'Prompt' -and $saved.Count -ne 0) { throw 'Idle cancellation changed the conversation.' }
     if ($During -eq 'Completed' -and ($saved.Count -ne 2 -or $checkpoint.data.state.InputTokens -ne 1234)) { throw 'Cancellation after an answer lost conversation state or usage.' }
     Write-Host ('CLI exit cancellation passed (During={0}, ConstrainedLanguage).' -f $During)
 } finally {

@@ -14,10 +14,6 @@ function Get-TestOutput {
     return ConvertFrom-Json $item[0].output
 }
 
-function Get-TestEvents {
-    @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
-}
-
 $script:Writes = @()
 function Write-Host {
     param($Object, $ForegroundColor, [switch]$NoNewline)
@@ -83,9 +79,7 @@ try {
     $checkpoint = @($events | Where-Object { $_.event -eq 'session_checkpoint' })[-1]
     Assert-True ($checkpoint.data.version -eq 3 -and $checkpoint.data.history_count -eq $historyCount -and @($checkpoint.data.omitted_call_ids).Count -eq 3) 'Checkpoint the conversation length and omitted outputs.'
 
-    Push-Location -LiteralPath $WorkRoot
-    try { $resumed = New-AgentSession -ConfigFile $config -Resume $Session.Id }
-    finally { Pop-Location }
+    $resumed = New-TestSession -Resume $Session.Id
     $resumed.MaxRequestChars = $Session.MaxRequestChars
     Assert-True ($resumed.History.Count -eq $historyCount -and $resumed.OmittedOutputs.Count -eq 3) 'Restore the conversation and omitted outputs.'
     $restored = New-FlintPayload $resumed
@@ -99,10 +93,8 @@ try {
     Assert-True (-not $resumed.OmittedOutputs.ContainsKey('read_4') -and $resumed.OmittedOutputs.ContainsKey('read_3')) 'Omit every read output but the unread one before stopping.'
 
     # Through the agent loop, compaction runs between model calls of one turn with real file reads.
-    Push-Location -LiteralPath $WorkRoot
-    try { $loop = New-AgentSession -ConfigFile $config }
-    finally { Pop-Location }
-    $loop.WorkerPath = $Session.WorkerPath; $loop.PermissionSessionDirectory = $Session.PermissionSessionDirectory
+    $loop = New-TestSession
+    $loop.WorkerPath = $Session.WorkerPath
     $loop.MaxRequestChars = 150000
     foreach ($index in 1..4) { Set-Content -LiteralPath (Join-Path $WorkRoot ('loop' + $index + '.txt')) -Value (('loop-page-' + $index + ' ') + ('z' * 20000)) -Encoding UTF8 -NoNewline }
     $script:LoopPayloads = @()
@@ -128,14 +120,12 @@ try {
     $last = $script:LoopPayloads[-1]
     Assert-True ((Get-TestOutput $last 'loop_1').output_omitted -and (Get-TestOutput $last 'loop_4').output.Contains('loop-page-4')) 'Replace the oldest read and keep the latest one.'
     Assert-True (($script:Writes -join "`n") -like '*Context trimmed:*') 'Show the compaction notice during the turn.'
-    $loopEvents = @(Get-Content -LiteralPath $loop.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $loopEvents = @(Get-TestEvents $loop.TrajectoryPath)
     Assert-True (@($loopEvents | Where-Object { $_.event -eq 'context_compacted' }).Count -ge 1 -and $loopEvents[-1].event -eq 'turn_stopped' -and $loopEvents[-1].data.reason -eq 'completed') 'Record compaction in a completed turn.'
     Assert-True (@($loopEvents | Where-Object { $_.event -eq 'context_near_limit' }).Count -eq 0 -and @(Get-TestEvents | Where-Object { $_.event -eq 'context_near_limit' }).Count -eq 0) 'Do not warn when trimming makes enough room.'
 
     # Content that cannot be omitted can keep the request above 80% of the limit after trimming.
-    Push-Location -LiteralPath $WorkRoot
-    try { $near = New-AgentSession -ConfigFile $config }
-    finally { Pop-Location }
+    $near = New-TestSession
     $near.History = @(@{ role = 'user'; content = ('n' * 100000) })
     $near.MaxRequestChars = 100000000
     $null = New-FlintPayload $near
@@ -143,23 +133,19 @@ try {
     $script:Writes = @()
     $null = New-FlintPayload $near
     $null = New-FlintPayload $near
-    $nearEvents = @(Get-Content -LiteralPath $near.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ } | Where-Object { $_.event -eq 'context_near_limit' })
+    $nearEvents = @(Get-TestEvents $near.TrajectoryPath | Where-Object { $_.event -eq 'context_near_limit' })
     Assert-True ($nearEvents.Count -eq 1 -and $nearEvents[0].data.request_chars -eq $near.RequestChars -and $nearEvents[0].data.limit_chars -eq $near.MaxRequestChars) 'Record the near-limit warning once with the request size.'
     $warnings = @($script:Writes | Where-Object { $_ -like '*Context is nearly full*' })
     Assert-True ($warnings.Count -eq 1 -and ($script:Writes -join "`n") -like ('*Request {0:N0} of {1:N0} characters. Finish this task*' -f $near.RequestChars, $near.MaxRequestChars)) 'Tell the user once to finish the task and start a new session.'
 
     # Redaction with newer credentials can shrink an omitted output; a recorded omission must still resume.
-    Push-Location -LiteralPath $WorkRoot
-    try { $small = New-AgentSession -ConfigFile $config }
-    finally { Pop-Location }
+    $small = New-TestSession
     $small.History = @(@{ role = 'user'; content = 'Read a short file.' })
     $small.History += New-TestCall 'short_1' 'read_file' '{"path":"short.txt","start_line":1,"start_column":1,"max_lines":200}' @{ status = 'ok'; exit_code = 0; output = 'short'; next_line = $null }
     $small.History += @{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = 'Done.' }) }
     $small.OmittedOutputs['short_1'] = (Get-FlintOmittedOutput ([string]$small.History[2].output)).output
     Write-FlintCheckpoint $small
-    Push-Location -LiteralPath $WorkRoot
-    try { $smallResumed = New-AgentSession -ConfigFile $config -Resume $small.Id }
-    finally { Pop-Location }
+    $smallResumed = New-TestSession -Resume $small.Id
     Assert-True ($smallResumed.OmittedOutputs['short_1'] -ceq $small.OmittedOutputs['short_1']) 'Rebuild every recorded omission on resume, whatever its size.'
     Remove-Item -LiteralPath function:Write-Host
     Write-Host 'All context tests passed.'

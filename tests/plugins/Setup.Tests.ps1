@@ -1,9 +1,6 @@
 #Requires -Version 5.1
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'TestSupport.ps1')
 $savedPath = $env:PATH
-# The key prompt is the only interactive step; tests answer it here.
-$script:KeyInput = ''; $script:KeyPrompts = @()
-function Read-FlintSetupApiKey { param([bool]$HasCurrent) $script:KeyPrompts += $HasCurrent; return $script:KeyInput }
 function Read-TestConfig { param([string]$Path) return Read-FlintIniFile $Path (Get-FlintConfigSchema) }
 try {
     foreach ($case in @(
@@ -68,58 +65,56 @@ try {
     New-Item -ItemType Directory -Path $missingTemplate | Out-Null
     Assert-Throws { Test-FlintSetup $missingTemplate } '*No flint.ini was found*'
 
-    # Setup writes flint.ini with the pasted key and installs the plugins through staging.
+    # Setup writes flint.ini with an empty api_key for the user to fill in, and installs the plugins through staging.
     $configDirectory = Join-Path $TestRoot 'runtime'
     New-Item -ItemType Directory -Path $configDirectory | Out-Null
     $configPath = Join-Path $configDirectory 'flint.ini'
     $installRoot = Join-Path $configDirectory 'plugins'
-    $script:KeyInput = ''
-    Assert-Throws { Install-FlintSetup $source $configPath $installRoot } '*An API key is required*'
-    Assert-True (-not (Test-Path -LiteralPath $configPath) -and -not (Test-Path -LiteralPath $installRoot)) 'Change nothing without a key.'
-    $script:KeyInput = 'bad' + [string][char]7 + 'key'
-    Assert-Throws { Install-FlintSetup $source $configPath $installRoot } '*control characters*'
-    $script:KeyInput = '  first-key  '; $script:KeyPrompts = @()
     $result = Install-FlintSetup $source $configPath $installRoot
+    $lines = @(Get-Content -LiteralPath $configPath -Encoding UTF8)
     $written = Read-TestConfig $configPath
-    Assert-True ($written['model.api_key'] -ceq 'first-key' -and $written['model.deployment'] -ceq 'team-model' -and $written['model.api_key_help'] -ceq 'Ask the team for the key.') 'Write the template and the trimmed key to flint.ini.'
-    Assert-True ($KeyPrompts.Count -eq 1 -and -not $KeyPrompts[0]) 'Ask for a key without offering to keep one that does not exist.'
-    Assert-True ((Get-Content -LiteralPath $configPath -Encoding UTF8)[0] -like '; Written by agent.ps1 -Setup from *') 'Mark flint.ini as generated.'
-    $config = Read-FlintConfig $configPath
-    Assert-True ($config.ApiKey -ceq 'first-key' -and $config.ApiKeyHelp -ceq 'Ask the team for the key.') 'Flint starts from the written configuration.'
+    Assert-True ($lines[0] -like '; Written by agent.ps1 -Setup from *' -and $lines[-1] -ceq 'api_key =') 'Mark flint.ini as generated and end it with an empty api_key to fill in.'
+    Assert-True ($written['model.deployment'] -ceq 'team-model' -and $written['model.api_key_help'] -ceq 'Ask the team for the key.' -and -not $result.key_kept) 'Write the template without a key.'
+    Assert-Throws { Read-FlintConfig $configPath } '*Set api_key under `[model`]. Ask the team for the key.*'
     Assert-True ((Test-Path -LiteralPath (Join-Path $installRoot 'example\plugin.json')) -and @($result.removed).Count -eq 0) 'Install the setup plugins.'
     $record = ConvertFrom-Json (Get-Content -LiteralPath (Join-Path $installRoot 'example.source.json') -Raw -Encoding UTF8)
     Assert-True ($record.kind -ceq 'directory' -and $record.source -ceq (Get-Item -LiteralPath $source).FullName -and $record.plugin_version -ceq '1.0.0' -and $record.installed_at) 'Record where each plugin came from.'
     Assert-True (@(Get-ChildItem -LiteralPath $installRoot -Force | Where-Object { $_.Name.StartsWith('.') }).Count -eq 0) 'Leave no staging or backup directories behind.'
 
-    $script:KeyInput = ''; $script:KeyPrompts = @()
+    # The user pastes the key into flint.ini; running setup again keeps it.
+    Set-Content -LiteralPath $configPath -Encoding UTF8 -Value ($lines -replace '^api_key =$', 'api_key = first-key')
+    $config = Read-FlintConfig $configPath
+    Assert-True ($config.ApiKey -ceq 'first-key' -and $config.ApiKeyHelp -ceq 'Ask the team for the key.') 'Flint starts once the key is pasted.'
     $null = New-TestPlugin (Join-Path $source 'Plugins\example') -Version '1.1.0'
-    $null = Install-FlintSetup $source $configPath $installRoot
-    Assert-True ($KeyPrompts[0] -and (Read-TestConfig $configPath)['model.api_key'] -ceq 'first-key') 'Enter keeps the current key when setup runs again.'
+    $result = Install-FlintSetup $source $configPath $installRoot
+    Assert-True ($result.key_kept -and (Read-TestConfig $configPath)['model.api_key'] -ceq 'first-key') 'Running setup again keeps the pasted key.'
     Assert-True ((Test-FlintPlugin (Join-Path $installRoot 'example')).version -ceq '1.1.0') 'Running setup again updates the plugins.'
-    $script:KeyInput = 'second-key'
-    $null = Install-FlintSetup $source $configPath $installRoot
-    Assert-True ((Read-TestConfig $configPath)['model.api_key'] -ceq 'second-key') 'A pasted key replaces the current one.'
 
     # The setup folder is the only source of plugins: plugins it drops are removed.
     $next = New-TestSetup (Join-Path $TestRoot 'source\next') -Plugins @('second') -Template @('[model]', $endpoint, 'deployment = next-model')
-    $script:KeyInput = ''
     $result = Install-FlintSetup $next $configPath $installRoot
     $written = Read-TestConfig $configPath
     Assert-True ((@($result.removed) -join ',') -ceq 'example' -and -not (Test-Path -LiteralPath (Join-Path $installRoot 'example')) -and -not (Test-Path -LiteralPath (Join-Path $installRoot 'example.source.json'))) 'Remove plugins the setup no longer includes.'
-    Assert-True ((Test-Path -LiteralPath (Join-Path $installRoot 'second\plugin.json')) -and $written['model.deployment'] -ceq 'next-model' -and -not $written.ContainsKey('model.api_key_help') -and $written['model.api_key'] -ceq 'second-key') 'Follow the new template and keep the key.'
+    Assert-True ((Test-Path -LiteralPath (Join-Path $installRoot 'second\plugin.json')) -and $written['model.deployment'] -ceq 'next-model' -and -not $written.ContainsKey('model.api_key_help') -and $written['model.api_key'] -ceq 'first-key') 'Follow the new template and keep the key.'
     $before = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
     Assert-Throws { Install-FlintSetup $broken $configPath $installRoot } '*guide refers to*'
     Assert-True ((Get-Content -LiteralPath $configPath -Raw -Encoding UTF8) -ceq $before -and (Test-Path -LiteralPath (Join-Path $installRoot 'second'))) 'A rejected setup changes neither flint.ini nor the plugins.'
     $longParent = Join-Path $TestRoot ('p' * (212 - $TestRoot.Length))
-    $script:KeyInput = 'long-key'
     Assert-Throws { Install-FlintSetup $source (Join-Path $TestRoot 'long.ini') $longParent } '*longer than 240 characters*'
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $TestRoot 'long.ini')) -and @(Get-ChildItem -LiteralPath $TestRoot -Filter '.flint-*' -Force).Count -eq 0) 'A failed plugin sync leaves flint.ini unchanged and removes the staged copy.'
     $blankConfig = Join-Path $TestRoot 'blank.ini'
     Set-Content -LiteralPath $blankConfig -Encoding UTF8 -Value @('[model]', $endpoint, 'deployment = team-model', 'api_key = "   "')
     $blankPlugins = Join-Path $TestRoot 'blank-plugins'
-    $script:KeyInput = ''; $script:KeyPrompts = @()
-    Assert-Throws { Install-FlintSetup $source $blankConfig $blankPlugins } '*An API key is required*'
-    Assert-True (-not $KeyPrompts[0] -and -not (Test-Path -LiteralPath $blankPlugins)) 'A blank current key is not offered and cannot be kept.'
+    $result = Install-FlintSetup $source $blankConfig $blankPlugins
+    Assert-True (-not $result.key_kept -and (Get-Content -LiteralPath $blankConfig -Encoding UTF8)[-1] -ceq 'api_key =') 'A blank key is not kept.'
+    $brokenConfig = Join-Path $TestRoot 'broken.ini'
+    Set-Content -LiteralPath $brokenConfig -Encoding UTF8 -Value @('[model]', $endpoint, 'deployment = team-model', 'api_key = keep-this-key', 'colour = blue')
+    $before = Get-Content -LiteralPath $brokenConfig -Raw -Encoding UTF8
+    $brokenPlugins = Join-Path $TestRoot 'broken-plugins'
+    $message = ''
+    try { $null = Install-FlintSetup $source $brokenConfig $brokenPlugins } catch { $message = $_.Exception.Message }
+    Assert-True ($message -like "*Could not read the current*unknown setting 'colour'*run -Setup again*" -and -not $message.Contains('keep-this-key')) ('Explain why the current flint.ini cannot be kept, without echoing it: ' + $message)
+    Assert-True ((Get-Content -LiteralPath $brokenConfig -Raw -Encoding UTF8) -ceq $before -and -not (Test-Path -LiteralPath $brokenPlugins)) 'An unreadable flint.ini stops setup before its key or the plugins change.'
 
     # Archives from the Azure DevOps download button contain one top-level folder; flint.ini at the root also works.
     $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
@@ -134,11 +129,10 @@ try {
     Assert-True ($LASTEXITCODE -eq 0) 'Create an ambiguous archive fixture.'
     $zipRoot = Join-Path $TestRoot 'zip-installed'
     $zipConfig = Join-Path $TestRoot 'zip.ini'
-    $script:KeyInput = 'zip-key'
     $null = Install-FlintSetup $nested $zipConfig $zipRoot
     Assert-True ((Test-FlintPlugin (Join-Path $zipRoot 'example')).version -ceq '1.1.0') 'Set up from an archive with one top-level folder.'
     $null = Install-FlintSetup $flat $zipConfig $zipRoot
-    Assert-True ((Read-TestConfig $zipConfig)['model.api_key'] -ceq 'zip-key') 'Set up from an archive with flint.ini at its root.'
+    Assert-True ((Read-TestConfig $zipConfig)['model.deployment'] -ceq 'team-model') 'Set up from an archive with flint.ini at its root.'
     Assert-Throws { Install-FlintSetup $twoFolders $zipConfig $zipRoot } '*flint.ini at its root or inside a single top-level folder*'
 
     # A compiled stand-in for git.exe records the exact sparse fetch and serves the setup folder.
@@ -186,7 +180,6 @@ class FakeGit {
     $gitRoot = Join-Path $TestRoot 'git-installed'
     $gitConfig = Join-Path $TestRoot 'git.ini'
     $url = 'https://user@dev.azure.com/contoso/Project/_git/Repo?path=/team/flint&version=GBmain'
-    $script:KeyInput = 'git-key'
     $null = Install-FlintSetup $url $gitConfig $gitRoot
     $plugin = (Read-FlintPlugins $gitRoot).loaded[0]
     Assert-True ($plugin.name -ceq 'example' -and $plugin.source.commit -ceq '0123456789abcdef0123456789abcdef01234567') 'Install the setup fetched by git.'

@@ -27,9 +27,7 @@ try {
     $null = New-TestPlugin (Join-Path $plugins '.staging-0123') -Name 'staged'
     $baseTools = ConvertTo-Json -InputObject $Session.Tools -Depth 16 -Compress
     $baseInstructions = $Session.Instructions
-    Push-Location -LiteralPath $WorkRoot
-    try { $script:Session = New-AgentSession -ConfigFile $config } finally { Pop-Location }
-    $Session.PermissionSessionDirectory = Join-Path $TestRoot 'permissions'
+    $script:Session = New-TestSession
 
     Assert-True (@($Session.Plugins).Count -eq 1 -and $Session.Plugins[0].name -ceq 'example') 'Load valid plugins and skip staging directories.'
     $errors = @($Session.PluginErrors | ForEach-Object { $_.name }) -join ','
@@ -40,7 +38,7 @@ try {
     Assert-True ((ConvertTo-Json -InputObject $Session.Tools -Depth 16 -Compress) -ceq $baseTools -and $Session.Tools.Count -eq 9) 'Plugins never change tool definitions.'
     Assert-True ($Session.Instructions.StartsWith($baseInstructions) -and $Session.Instructions.Contains('Installed plugins:') -and
         $Session.Instructions.Contains('- example 1.0.0: Fictional widgets') -and $Session.Instructions.Contains('  Guide: ' + $Session.Plugins[0].guide)) 'Describe installed plugins after the fixed instructions.'
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     $start = @($events | Where-Object { $_.event -eq 'session_started' })[0]
     Assert-True ($start.data.plugins[0].name -ceq 'example' -and $start.data.plugins[0].rules -eq 2 -and @($start.data.plugin_errors).Count -eq 2) 'Record the plugin set in the trajectory.'
     $banner = (Show-FlintSession $Session 6>&1 | Out-String)
@@ -50,7 +48,7 @@ try {
 
     $read = @('get', 'widgets.example.io', '--context', 'cluster', '--namespace', 'team', '--output', 'json')
     Assert-True ((Invoke-WidgetCommand $read).status -eq 'ok' -and $Prompts -eq 0) 'Plugin rules authorize reviewed reads automatically.'
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     Assert-True (@($events | Where-Object { $_.event -eq 'command_permission' -and $_.data.rule_source -ceq 'plugin:example' }).Count -eq 1) 'Attribute the automatic read to the plugin.'
     $call = @{ name = 'run_command'; arguments = ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = $read; purpose = 'Inspect the scoped widget.' } }
     $plan = Get-FlintParallelCall $Session $call
@@ -99,33 +97,16 @@ try {
     $guide = Invoke-FlintFileTool $Session.Root read_file @{ path = $Session.Plugins[0].guide; start_line = 1; start_column = 1; max_lines = 50 } $Session.ProtectedPaths -SessionId $Session.Id
     Assert-True ($guide.status -eq 'ok' -and $guide.output.Contains('reconciled by the example controller')) 'The model can read the plugin guide named in its instructions.'
 
-    # Resume keeps the conversation and tells the model when the installed plugins changed.
+    # A resumed conversation uses the plugins installed now and keeps its history as saved.
     Write-FlintCheckpoint $Session
-    $checkpoint = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ } | Where-Object { $_.event -eq 'session_checkpoint' })[-1]
-    Assert-True ($checkpoint.data.version -eq 3 -and $checkpoint.data.plugins[0].version -ceq '1.0.0') 'Checkpoint the plugin set with the conversation.'
     $historyCount = @($Session.History).Count
-    Push-Location -LiteralPath $WorkRoot
-    try { $same = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
-    Assert-True (@($same.PluginChanges).Count -eq 0 -and @($same.History).Count -eq $historyCount) 'An unchanged plugin set adds nothing on resume.'
     $null = New-TestPlugin (Join-Path $plugins 'example') -Version '1.1.0'
     $null = New-TestPlugin (Join-Path $plugins 'extra') -Name 'extra'
-    Push-Location -LiteralPath $WorkRoot
-    try { $changed = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
-    $changes = @($changed.PluginChanges) -join '; '
-    Assert-True ($changes -ceq 'example 1.0.0 -> 1.1.0; added extra 1.0.0') ('Report plugin changes on resume: ' + $changes)
-    $note = @($changed.History)[-1]
-    Assert-True ($note.role -ceq 'developer' -and $note.content.Contains('example 1.0.0 -> 1.1.0') -and $note.content.Contains('Read the current plugin guide')) 'Tell the model which plugin guidance may be stale.'
-    Assert-True ($changed.Instructions.Contains('- example 1.1.0:') -and $changed.Instructions.Contains('- extra 1.0.0:')) 'Resumed sessions use the plugins installed now.'
-    $resumedBanner = (Show-FlintSession $changed 6>&1 | Out-String)
-    Assert-True ($resumedBanner.Contains('Plugins changed since this conversation was saved: example 1.0.0 -> 1.1.0; added extra 1.0.0')) 'Show plugin changes when a conversation is restored.'
-    Push-Location -LiteralPath $WorkRoot
-    try { $again = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
-    Assert-True (@($again.PluginChanges).Count -eq 0 -and @($again.History)[-1].role -ceq 'developer') 'The note is saved once; the next resume compares against the updated checkpoint.'
+    $changed = New-TestSession -Resume $Session.Id
+    Assert-True ($changed.Instructions.Contains('- example 1.1.0:') -and $changed.Instructions.Contains('- extra 1.0.0:') -and @($changed.History).Count -eq $historyCount) 'Resumed sessions use the plugins installed now.'
 
-    Push-Location -LiteralPath $WorkRoot
-    try { $old = New-AgentSession -ConfigFile $config } finally { Pop-Location }
+    $old = New-TestSession
     Write-FlintEvent $old 'session_checkpoint' @{ version = 2; root = $old.Root; model = $old.Model; history_count = 0; omitted_call_ids = @(); state = @{} }
-    Push-Location -LiteralPath $WorkRoot
-    try { Assert-Throws { New-AgentSession -ConfigFile $config -Resume $old.Id } '*earlier Flint versions*' } finally { Pop-Location }
+    Assert-Throws { New-TestSession -Resume $old.Id } '*earlier Flint versions*'
     Write-Host 'All plugin loading tests passed.'
 } finally { Remove-TestFixture }

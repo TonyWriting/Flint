@@ -32,7 +32,8 @@ try {
     $childId = [int](Get-Content -LiteralPath $pidPath)
     Assert-True (-not (Get-Process -Id $childId -ErrorAction SilentlyContinue)) 'Terminate the timed-out process.'
     # A process that keeps writing must stop at the output cap well before its time budget.
-    Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value "while (`$true) { Write-Output ('x' * 1000) }"
+    # Large writes reach the 1 MiB cap in a few iterations, even on a slow shared runner.
+    Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value "while (`$true) { Write-Output ('x' * 65536) }"
     $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 30 $WorkRoot
     Assert-True ($result.status -eq 'output_limit' -and $result.duration_ms -lt 30000) ('Cap native output independently of the tool timeout.' + (Format-TestResult $result))
 
@@ -45,7 +46,7 @@ try {
     Assert-True ($result.status -eq 'timeout' -and $result.output -like '*outcome may be unknown*') 'Require state verification after a write timeout.'
     $result = Invoke-TestTool write_file @{ path = 'note.txt'; content = 'content' }
     Assert-True ($result.status -eq 'timeout' -and $result.output -like '*outcome may be unknown*') 'Report uncertainty after a full-file write timeout.'
-    $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents)
     Assert-True (@($events | Where-Object { $_.event -eq 'tool_retry' }).Count -eq 0) 'Never automatically retry an uncertain write.'
     Write-Host 'All process tests passed.'
 } finally { Remove-TestFixture }

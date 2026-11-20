@@ -22,9 +22,7 @@ try {
     Assert-True (-not $source.Contains('test-api-key')) 'Redact credentials from the saved conversation.'
     $directory = Split-Path $Session.TrajectoryPath -Parent
     $previousSequence = $Session.EventSequence
-    Push-Location -LiteralPath $WorkRoot
-    try { $resumed = New-AgentSession -ConfigFile $config -Resume $Session.Id }
-    finally { Pop-Location }
+    $resumed = New-TestSession -Resume $Session.Id
     Assert-True ($resumed.Id -ceq $Session.Id -and $resumed.TrajectoryPath -ceq $Session.TrajectoryPath) 'Keep the original session ID and trajectory path on resume.'
     Assert-True ($resumed.EventSequence -eq ($previousSequence + 2)) 'Append the resume event and checkpoint after the existing event sequence.'
     Assert-True ([string]$resumed.Started.Kind -eq 'Utc' -and ($resumed.Started - $Session.Started).TotalMilliseconds -gt -10 -and ($resumed.Started - $Session.Started).TotalMilliseconds -lt 10) 'Restore the original UTC time origin independently of the local timezone.'
@@ -36,13 +34,11 @@ try {
     Assert-True ($answer -eq 'Continued.' -and $script:ResumedPayload.input.Count -eq 5) 'Send restored history and the new user message in the next model request.'
     Assert-True ($resumed.InputTokens -eq 1243 -and $resumed.OutputTokens -eq 60 -and $resumed.CachedTokens -eq 1003 -and $resumed.ReasoningTokens -eq 22) 'Accumulate new usage on the restored totals without double counting.'
     Assert-True ((Get-Content -LiteralPath $Session.TrajectoryPath -Raw -Encoding UTF8).StartsWith($source)) 'Preserve every existing record and append new events.'
-    Push-Location -LiteralPath $WorkRoot
-    try { $again = New-AgentSession -ConfigFile $config -Resume $Session.Id.ToUpperInvariant() }
-    finally { Pop-Location }
+    $again = New-TestSession -Resume $Session.Id.ToUpperInvariant()
     Assert-True ($again.Id -ceq $Session.Id -and $again.History.Count -eq $resumed.History.Count -and $again.InputTokens -eq 1243) 'Keep identity, history and usage stable across repeated resumes.'
     Assert-True ($again.Started -eq $resumed.Started) 'Keep the session time origin across resumes.'
     $resumed = $again
-    $events = @(Get-Content -LiteralPath $resumed.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
+    $events = @(Get-TestEvents $resumed.TrajectoryPath)
     Assert-True (@($events | Where-Object { $_.event -eq 'session_started' }).Count -eq 1 -and @($events | Where-Object { $_.event -eq 'session_resumed' }).Count -eq 2) 'Distinguish session creation from continuation.'
     for ($i = 0; $i -lt $events.Count; $i++) {
         Assert-True ($events[$i].sequence -eq ($i + 1) -and $events[$i].session_id -ceq $Session.Id) 'Keep one session ID and a continuous sequence in the trajectory.'
@@ -58,9 +54,7 @@ try {
     Add-Content -LiteralPath $resumed.TrajectoryPath -Value '{broken' -Encoding UTF8
     Assert-Throws { Read-FlintSession $resumed.Id $directory $WorkRoot } '*invalid JSON*'
 
-    Push-Location -LiteralPath $WorkRoot
-    try { $unsupported = New-AgentSession -ConfigFile $config; $gap = New-AgentSession -ConfigFile $config }
-    finally { Pop-Location }
+    $unsupported = New-TestSession; $gap = New-TestSession
     Write-FlintEvent $unsupported 'session_checkpoint' @{ version = 1; root = $unsupported.Root; model = $unsupported.Model; state = @{ History = @() } }
     Assert-Throws { Read-FlintSession $unsupported.Id $directory $WorkRoot } '*no supported resume checkpoint*'
     $gap.History = @(@{ role = 'user'; content = 'First.' }, @{ role = 'user'; content = 'Second.' }); $gap.HistoryLogged = 1

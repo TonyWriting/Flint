@@ -10,7 +10,6 @@ if not "%AZURE_CORE_NO_COLOR%"=="true" (
   echo ModuleNotFoundError: No module named 'ctypes' 1>&2
   exit /b 90
 )
-if defined AZURE_OPENAI_API_KEY exit /b 91
 if defined FLINT_MODEL_API_KEY exit /b 92
 if defined FLINT_AZURE_ACCESS_TOKEN exit /b 93
 if "%~1"=="login" (
@@ -35,7 +34,7 @@ echo ERROR: Please run az login. 1>&2
 exit /b 1
 '@
     $Session.Azure = @{ CliPath = $launcher; Tenant = 'contoso.onmicrosoft.com' }
-    foreach ($name in @('AZURE_OPENAI_API_KEY', 'FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')) {
+    foreach ($name in @('FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')) {
         $savedEnvironment[$name] = (Get-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue).Value
         Set-Item -LiteralPath ('Env:' + $name) -Value 'must-not-reach-cli'
     }
@@ -65,13 +64,13 @@ exit /b 1
     Remove-Item -LiteralPath Env:AZURE_CORE_NO_COLOR -ErrorAction SilentlyContinue
     $null = Invoke-FlintAzureCli $Session account
     Assert-True (-not (Test-Path -LiteralPath Env:AZURE_CORE_NO_COLOR)) 'Keep an initially absent color variable absent after invocation.'
-    foreach ($name in @('AZURE_OPENAI_API_KEY', 'FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')) {
+    foreach ($name in @('FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')) {
         Assert-True ((Get-Item -LiteralPath ('Env:' + $name)).Value -ceq 'must-not-reach-cli') 'Restore parent environment values after native invocation.'
     }
     Assert-True (@(Get-ChildItem -LiteralPath $TestRoot -Filter '*stdout*' -Recurse).Count -eq 0) 'Never create a CLI token capture file.'
     Assert-True (-not (Get-Content -LiteralPath $Session.TrajectoryPath -Raw).Contains('private-cli-fixture-token')) 'Keep CLI token output out of the trajectory.'
     $Session.Azure.Tenant = 'tenant&unexpected-command'
-    Assert-Throws { Invoke-FlintAzureCli $Session token } '*tenant ID or a tenant domain*'
+    Assert-Throws { Invoke-FlintAzureAuth $Session token } '*tenant ID or a tenant domain*'
     Write-Host 'All Azure CLI tests passed.'
 } finally {
     foreach ($name in $savedEnvironment.Keys) {

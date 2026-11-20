@@ -28,7 +28,7 @@ try {
     $null = Read-FlintPrompt $Session
     Assert-True ((Get-UiText).Trim() -ceq '>') 'Keep usage details out of the input area.'
     $script:Writes = @()
-    Show-FlintHelp $Session
+    Show-FlintHelp
     Assert-True ((Get-UiText).Contains('Ctrl+C') -and -not (Get-UiText).Contains('Esc') -and -not (Get-UiText).Contains('Shift+Enter')) 'Advertise only supported input shortcuts.'
 
     # Blank entries: the console echoes Enter as a newline, so ANSI moves back up and redraws the prompt.
@@ -195,6 +195,10 @@ still ordinary text
     Assert-True ((ConvertTo-Json -InputObject $Session.History -Depth 32 -Compress) -ceq $historyBefore -and $Session.EventSequence -eq $sequenceBefore -and $Session.ModelCalls -eq $callsBefore) 'History display must not change conversation state, usage or the trajectory.'
     $Session.History = @(); $script:Writes = @(); Show-FlintHistory $Session
     Assert-True ($script:Writes.Count -eq 0) 'Show nothing for an empty conversation.'
+    $Session.ModelCalls = 0; $Session.UsageReports = 0; $Session.InputTokens = 0L; $Session.OutputTokens = 0L
+    $Session.CachedReported = $false; $Session.ReasoningReported = $false
+    $script:Writes = @(); Show-FlintExit $Session
+    Assert-True ((Get-UiText).Contains('Token usage: total=0 input=0 output=0') -and (Get-UiText).Contains('-Resume ' + $Session.Id)) 'Report measured zero usage and a resume command when no model call was made.'
     $Session.ModelCalls = 3; $Session.UsageReports = 2
     $Session.InputTokens = 1234L; $Session.OutputTokens = 56L; $Session.CachedTokens = 1000L; $Session.ReasoningTokens = 20L
     $Session.CachedReported = $true; $Session.ReasoningReported = $true

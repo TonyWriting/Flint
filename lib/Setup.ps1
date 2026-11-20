@@ -1,5 +1,6 @@
 # Team setup: a folder that holds a flint.ini template without an API key and, optionally, Plugins\<name>
-# plugin folders. -Setup writes flint.ini with the user's key and makes the installed plugins match the folder.
+# plugin folders. -Setup writes flint.ini, keeping any key the user already set, and makes the installed plugins
+# match the folder.
 
 function ConvertFrom-FlintSetupUrl {
     param([string]$Url)
@@ -193,7 +194,7 @@ function Test-FlintSetup {
     $errors = @(); $model = $null; $plugins = @()
     try {
         $values = Read-FlintIniFile $template (Get-FlintConfigSchema)
-        if ($values.ContainsKey('model.api_key')) { throw 'remove api_key. Flint asks each user for the key during setup, so keys never live in the shared folder.' }
+        if ($values.ContainsKey('model.api_key')) { throw 'remove api_key. Each user pastes the key into their own flint.ini, so keys never live in the shared folder.' }
         $model = ConvertTo-FlintModelConfig $values -WithoutKey
     } catch { $errors += ('flint.ini: ' + $_.Exception.Message) }
     $pluginFolder = $null
@@ -217,11 +218,7 @@ function Test-FlintSetup {
             } catch { $errors += ('Plugins\' + $child.Name + ': ' + $_.Exception.Message) }
         }
     }
-    if ($errors.Count -gt 0) {
-        $shown = @($errors | Select-Object -First 20 | ForEach-Object { '  - ' + $_ })
-        if ($errors.Count -gt 20) { $shown += ('  - ... and ' + ($errors.Count - 20) + ' more.') }
-        throw ((@("Setup at '" + $root + "' is invalid:") + $shown) -join [Environment]::NewLine)
-    }
+    if ($errors.Count -gt 0) { throw (Format-FlintErrorList ("Setup at '" + $root + "' is invalid:") $errors) }
     return @{ root = $root; model = $model; plugins = $plugins }
 }
 
@@ -243,20 +240,6 @@ function Show-FlintPluginSummary {
     Write-Host ('    Files: {0} ({1:N0} KiB); reviewed reads: {2}; guarded resources: {3}' -f $Plugin.file_count, [long]($Plugin.total_bytes / 1024), @($Plugin.rules).Count, $guarded) -ForegroundColor DarkGray
 }
 
-function Read-FlintSetupApiKey {
-    param([bool]$HasCurrent)
-    $prompt = 'Paste the API key'
-    if ($HasCurrent) { $prompt += ' (press Enter to keep the current key)' }
-    # Only input piped into the console host is read as a plain line. Typed input stays hidden even when the
-    # output is redirected or another host, such as the ISE, runs setup.
-    $piped = $false
-    if ($Host.Name -ceq 'ConsoleHost') { try { $piped = [Console]::IsInputRedirected } catch { $piped = $false } }
-    if ($piped) { return [string](Read-Host -Prompt $prompt) }
-    $secure = Read-Host -Prompt $prompt -AsSecureString
-    # PSCredential is a core type, so this conversion also works in ConstrainedLanguage.
-    return (New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList 'flint', $secure).GetNetworkCredential().Password
-}
-
 function Format-FlintIniValue {
     param([string]$Value)
     # The reader strips one pair of matching quotes, so values that start with a quote get wrapped in the other kind.
@@ -274,7 +257,8 @@ function Save-FlintStagedConfig {
         ('deployment = ' + (Format-FlintIniValue $Model.Model))
     )
     if ($Model.ApiKeyHelp) { $lines += ('api_key_help = ' + (Format-FlintIniValue $Model.ApiKeyHelp)) }
-    $lines += ('api_key = ' + (Format-FlintIniValue $ApiKey))
+    # The user pastes the key after the equals sign; Flint never reads it from the terminal.
+    if ($ApiKey) { $lines += ('api_key = ' + (Format-FlintIniValue $ApiKey)) } else { $lines += 'api_key =' }
     # Staged next to the target, so replacing flint.ini later is a rename within one folder.
     $staged = Join-Path (Split-Path $Path -Parent) ('.flint-' + [guid]::NewGuid().ToString('N') + '.tmp')
     try { Set-Content -LiteralPath $staged -Value $lines -Encoding UTF8 -ErrorAction Stop }
@@ -393,18 +377,13 @@ function Install-FlintSetup {
         $setup = Test-FlintSetup $folder
         Write-FlintSetupStep ('Validated the setup with ' + @($setup.plugins).Count + ' plugin(s)') $started
         Show-FlintSetupSummary $setup
-        # Validate everything before asking for the key, and keep the current key when the user presses Enter.
-        $current = ''
+        # Running setup again keeps the key the user already pasted into flint.ini. A file that cannot be read
+        # stops setup here, before anything changes, so its key is never replaced by an empty one.
+        $key = ''
         if (Test-Path -LiteralPath $ConfigFile -PathType Leaf) {
-            try { $current = ([string](Read-FlintIniFile $ConfigFile (Get-FlintConfigSchema))['model.api_key']).Trim() } catch { $current = '' }
+            try { $key = ([string](Read-FlintIniFile $ConfigFile (Get-FlintConfigSchema))['model.api_key']).Trim() }
+            catch { throw ("Could not read the current '" + $ConfigFile + "' to keep its API key. " + $_.Exception.Message + ' Fix the file, or delete it to start over, then run -Setup again.') }
         }
-        if ($setup.model.ApiKeyHelp) { Write-Host $setup.model.ApiKeyHelp -ForegroundColor Yellow }
-        try { $key = [string](Read-FlintSetupApiKey ([bool]$current)) }
-        catch { throw ('Could not read the API key: ' + $_.Exception.Message + ' Run -Setup in an interactive terminal.') }
-        $key = $key.Trim()
-        if (-not $key) { $key = $current }
-        if (-not $key) { throw 'An API key is required. Run -Setup again and paste the key.' }
-        if ($key -match '[\x00-\x1f\x7f]') { throw 'The API key cannot contain line breaks or control characters.' }
         # Write the new flint.ini before plugins change, so a folder that cannot take it fails while nothing has
         # changed. If a plugin then fails, the previous flint.ini stays; afterwards only a rename remains.
         $staged = Save-FlintStagedConfig $ConfigFile $parsed.display $setup.model $key
@@ -412,8 +391,8 @@ function Install-FlintSetup {
         $started = [datetime]::UtcNow
         try { Move-Item -LiteralPath $staged -Destination $ConfigFile -Force -ErrorAction Stop; $staged = $null }
         catch { throw ("The plugins were updated, but '" + $ConfigFile + "' could not be replaced: " + $_.Exception.Message + ' Close any program that has it open and run -Setup again.') }
-        Write-FlintSetupStep ('Wrote ' + $ConfigFile) $started
-        return @{ setup = $setup; config = $ConfigFile; removed = $removed }
+        Write-FlintSetupStep ('Generated ' + $ConfigFile) $started
+        return @{ setup = $setup; config = $ConfigFile; removed = $removed; key_kept = [bool]$key }
     } finally {
         if ($staged) { Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue }
         Remove-FlintDirectoryTree $work $workParent

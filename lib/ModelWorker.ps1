@@ -3,7 +3,6 @@ param([Parameter(Mandatory = $true)][string]$RequestPath)
 $ErrorActionPreference = 'Stop'
 $apiKey = $env:FLINT_MODEL_API_KEY
 Remove-Item -LiteralPath Env:FLINT_MODEL_API_KEY -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath Env:AZURE_OPENAI_API_KEY -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath Env:FLINT_AZURE_ACCESS_TOKEN -ErrorAction SilentlyContinue
 . (Join-Path $PSScriptRoot 'Security.ps1')
 . (Join-Path $PSScriptRoot 'Telemetry.ps1')
