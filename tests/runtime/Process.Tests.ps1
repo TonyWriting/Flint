@@ -32,7 +32,8 @@ try {
     $childId = [int](Get-Content -LiteralPath $pidPath)
     Assert-True (-not (Get-Process -Id $childId -ErrorAction SilentlyContinue)) 'Terminate the timed-out process.'
     # A process that keeps writing must stop at the output cap well before its time budget.
-    Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value "while (`$true) { Write-Output ('x' * 1000) }"
+    # Large writes reach the 1 MiB cap in a few iterations, even on a slow shared runner.
+    Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value "while (`$true) { Write-Output ('x' * 65536) }"
     $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 30 $WorkRoot
     Assert-True ($result.status -eq 'output_limit' -and $result.duration_ms -lt 30000) ('Cap native output independently of the tool timeout.' + (Format-TestResult $result))
 
