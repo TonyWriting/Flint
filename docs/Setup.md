@@ -1,6 +1,6 @@
 # 团队配置
 
-同一个团队的成员通常使用同一个模型和同一组[[Plugins|插件]]。团队把这些共享内容放进内部仓库的一个**配置文件夹**，成员运行一条 `-Setup` 命令，Flint 就会生成本机的 `flint.ini`，并装好团队的插件。API key 不放进共享文件夹，由每个人在运行 `-Setup` 时自己粘贴。
+同一个团队的成员通常使用同一个模型和同一组[[Plugins|插件]]。团队把这些共享内容放进内部仓库的一个**配置文件夹**，成员运行一条 `-Setup` 命令，Flint 就会生成本机的 `flint.ini`，并装好团队的插件。API key 不放进共享文件夹，也不在终端输入：`-Setup` 在 `flint.ini` 中留出空的 `api_key`，由每个人自己填入。
 
 ## 配置文件夹
 
@@ -21,10 +21,10 @@ Flint/                      配置文件夹，名字任意
 [model]
 endpoint = https://<resource>.services.ai.azure.com/openai/v1/responses
 deployment = <deployment>
-api_key_help = Copy the key from <where your team keeps it>.
+api_key_help = Copy the API key from <where your team keeps it>.
 ```
 
-`api_key_help` 可选。运行 `-Setup` 时，它显示在粘贴 key 的提示之前；以后模型拒绝 key（HTTP 401，通常是 key 已轮换）时，Flint 也会在错误信息中显示它，告诉用户去哪里取新 key。
+`api_key_help` 可选，写明去哪里取 key。`-Setup` 结束时、`api_key` 还没填就启动时、模型拒绝 key（HTTP 401，通常是 key 已轮换）时，Flint 都会显示它。
 
 `Plugins/` 下的每个子文件夹是一个插件，文件夹名与插件的 `name` 相同，不区分大小写。配置文件夹中只能有 `flint.ini`、`Plugins/` 和 `.md` 说明文件，`Plugins/` 中只能有插件文件夹和 `.md` 文件，不允许符号链接或 junction。
 
@@ -44,13 +44,12 @@ powershell.exe -NoProfile -File .\agent.ps1 -Setup 'C:\src\Repo\team\flint'
 Flint 依次完成以下步骤：
 
 1. **取得并校验**：完整校验 `flint.ini` 和每个插件，发现问题就列出全部原因并停止，本机不做任何改动。
-2. **显示内容**：列出模型、插件和 `api_key_help`。
-3. **读取 key**：粘贴 key 时不回显，只有 key 通过管道输入时才按普通文本读取。本机已有 `flint.ini` 时，直接按回车沿用当前的 key。
-4. **暂存配置**：把新的 `flint.ini` 写成同一目录下的临时文件。目录无法写入时在这一步失败，本机不做任何改动。
-5. **同步插件**：每个插件先拷贝到 `plugins/` 下的临时目录再校验一次，然后用重命名替换旧版本；配置文件夹中已经没有的插件会被删除。每个插件旁边写入 `plugins/<name>.source.json`，记录来源、分支、路径、commit 和安装时间，`/status` 会显示这些信息。插件同步失败时，原来的 `flint.ini` 保持不变。
-6. **替换配置**：用重命名替换 `flint.ini`，第一行注明来源，然后显示启动命令。
+2. **显示内容**：列出模型和插件。
+3. **暂存配置**：把新的 `flint.ini` 写成同一目录下的临时文件。本机 `flint.ini` 中已经填了 `api_key` 时保留它，否则 `api_key` 留空。目录无法写入时在这一步失败，本机不做任何改动。
+4. **同步插件**：每个插件先拷贝到 `plugins/` 下的临时目录再校验一次，然后用重命名替换旧版本；配置文件夹中已经没有的插件会被删除。每个插件旁边写入 `plugins/<name>.source.json`，记录来源、分支、路径、commit 和安装时间，`/status` 会显示这些信息。插件同步失败时，原来的 `flint.ini` 保持不变。
+5. **生成配置**：用重命名替换 `flint.ini`，第一行注明来源。`api_key` 为空时，提示从 `api_key_help` 指明的位置复制 key、填到 `api_key =` 之后，再显示启动命令；Flint 随即退出。
 
-团队更新了模型或插件后，重新运行同一条命令即可同步，按回车保留原来的 key。key 轮换时，重新运行并粘贴新 key，或者直接编辑 `flint.ini`。
+团队更新了模型或插件后，重新运行同一条命令即可同步，已经填好的 key 会保留。key 轮换时，直接编辑 `flint.ini` 中的 `api_key`。
 
 新会话才会加载插件的变化。用 `-Resume` 恢复的会话同样使用当前安装的插件；插件有变化时，Flint 会在界面和对话中说明变化，提醒模型重新阅读指南。
 

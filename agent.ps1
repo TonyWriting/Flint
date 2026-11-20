@@ -46,8 +46,14 @@ if ($MyInvocation.InvocationName -ne '.') {
                 foreach ($plugin in @($checked.plugins)) { Show-FlintPluginSummary $plugin }
             } else {
                 # Each step already reported its outcome; finish with what to do next.
-                $null = Install-FlintSetup $Setup
-                Write-Host 'Setup complete. Start Flint with:' -ForegroundColor Green
+                $installed = Install-FlintSetup $Setup
+                if ($installed.key_kept) {
+                    Write-Host 'Setup complete. The API key in flint.ini was kept. Start Flint with:' -ForegroundColor Green
+                } else {
+                    Write-Host 'Setup complete. Set the API key in flint.ini before starting Flint:' -ForegroundColor Green
+                    if ($installed.setup.model.ApiKeyHelp) { Write-Host ('  ' + $installed.setup.model.ApiKeyHelp) -ForegroundColor Yellow }
+                    Write-Host ('  Paste the key after "api_key =" in ' + $installed.config + '. Then start Flint with:')
+                }
                 Write-Host ("  & '" + $PSCommandPath.Replace("'", "''") + "'")
             }
             exit 0

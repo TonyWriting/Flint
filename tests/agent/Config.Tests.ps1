@@ -69,6 +69,7 @@ try {
     $env:AZURE_OPENAI_API_KEY = 'environment-key'
     foreach ($case in @(
         @{ lines = @('[model]', $endpoint, $deployment); pattern = '*Set api_key under `[model`]*' },
+        @{ lines = @('[model]', $endpoint, $deployment, 'api_key_help = Ask the team for the key.', 'api_key ='); pattern = '*Set api_key under `[model`]. Ask the team for the key.*' },
         @{ lines = @('[model]', $deployment, $apiKey); pattern = '*Set endpoint under `[model`]*' },
         @{ lines = @('[model]', $endpoint, $apiKey); pattern = '*Set deployment under `[model`]*' },
         @{ lines = @('[model]', $endpoint, 'deployment = ""', $apiKey); pattern = '*Set deployment under `[model`]*' },

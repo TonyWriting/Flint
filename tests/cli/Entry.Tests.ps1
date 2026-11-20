@@ -113,9 +113,9 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
             Assert-True (-not (Test-Path -LiteralPath $runtimeConfig)) 'Leave creation of the missing configuration to the user.'
         }
     }
-    Copy-Item -LiteralPath $config -Destination $runtimeConfig -Force
+    Remove-Item -LiteralPath $runtimeConfig -Force -ErrorAction SilentlyContinue
 
-    # Setup runs without a configuration, reads the key from input and installs into the runtime that was invoked.
+    # Setup runs without a configuration and without input, and installs into the runtime that was invoked.
     $setupLauncher = Join-Path $TestRoot 'setup-launch.ps1'
     Set-Content -LiteralPath $setupLauncher -Encoding ASCII -Value @(
         'param($CliPath, $Validate, $Setup)'
@@ -135,13 +135,19 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
         $validateExitCode = $LASTEXITCODE
     } finally { $ErrorActionPreference = 'Stop' }
     Assert-True ($validateExitCode -eq 1 -and ($output -join "`n").Contains('MAJOR.MINOR.PATCH')) 'Explain why a setup is invalid and exit with failure.'
-    $output = @('pasted-team-key') | & $powerShell -NoProfile -File $setupLauncher -CliPath $cliPath -Setup $setupSource
+    $output = & $powerShell -NoProfile -NonInteractive -File $setupLauncher -CliPath $cliPath -Setup $setupSource
     $transcript = $output -join "`n"
     $runtimePlugin = Join-Path (Split-Path $cliPath -Parent) 'plugins\example\plugin.json'
-    Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('Setup complete.') -and (Test-Path -LiteralPath $runtimePlugin)) ('Set up the invoked runtime from a team folder: ' + $transcript)
-    Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript -match 'Installed example 1\.0\.0 \(\d+\.\ds\)' -and $transcript.Contains('Wrote ' + $runtimeConfig)) 'Show where to get the key and report each step with its duration.'
-    Assert-True ($transcript.Contains("& '" + $cliPath + "'")) ('Name the invoked entry point in the start command: ' + $transcript)
-    Assert-True ((Read-FlintConfig $runtimeConfig).ApiKey -ceq 'pasted-team-key') 'Replace the current key with the key read from input.'
+    Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('Setup complete. Set the API key in flint.ini before starting Flint:') -and (Test-Path -LiteralPath $runtimePlugin)) ('Set up the invoked runtime from a team folder without reading a key: ' + $transcript)
+    Assert-True ($transcript -match 'Installed example 1\.0\.0 \(\d+\.\ds\)' -and $transcript.Contains('Generated ' + $runtimeConfig)) 'Report each step with its duration.'
+    Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript.Contains('Paste the key after "api_key =" in ' + $runtimeConfig) -and $transcript.Contains("& '" + $cliPath + "'")) ('Say where to get the key, where to paste it and how to start Flint: ' + $transcript)
+    # The user pastes the key into flint.ini; running setup again keeps it.
+    $lines = @(Get-Content -LiteralPath $runtimeConfig -Encoding UTF8)
+    Set-Content -LiteralPath $runtimeConfig -Encoding UTF8 -Value ($lines -replace '^api_key =$', 'api_key = pasted-team-key')
+    $output = & $powerShell -NoProfile -NonInteractive -File $setupLauncher -CliPath $cliPath -Setup $setupSource
+    $transcript = $output -join "`n"
+    Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('The API key in flint.ini was kept.') -and -not $transcript.Contains('Paste the key')) ('Keep the pasted key when setup runs again: ' + $transcript)
+    Assert-True ((Read-FlintConfig $runtimeConfig).ApiKey -ceq 'pasted-team-key') 'flint.ini keeps the pasted key.'
     $statusLogs = Join-Path $TestRoot 'plugin-logs'
     $output = @('/status', '/exit') | & $powerShell -NoProfile -File $launcher -CliPath $cliPath -LogDirectory $statusLogs
     $transcript = $output -join "`n"
