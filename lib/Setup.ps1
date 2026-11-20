@@ -377,10 +377,12 @@ function Install-FlintSetup {
         $setup = Test-FlintSetup $folder
         Write-FlintSetupStep ('Validated the setup with ' + @($setup.plugins).Count + ' plugin(s)') $started
         Show-FlintSetupSummary $setup
-        # Running setup again keeps the key the user already pasted into flint.ini.
+        # Running setup again keeps the key the user already pasted into flint.ini. A file that cannot be read
+        # stops setup here, before anything changes, so its key is never replaced by an empty one.
         $key = ''
         if (Test-Path -LiteralPath $ConfigFile -PathType Leaf) {
-            try { $key = ([string](Read-FlintIniFile $ConfigFile (Get-FlintConfigSchema))['model.api_key']).Trim() } catch { $key = '' }
+            try { $key = ([string](Read-FlintIniFile $ConfigFile (Get-FlintConfigSchema))['model.api_key']).Trim() }
+            catch { throw ("Could not read the current '" + $ConfigFile + "' to keep its API key. " + $_.Exception.Message + ' Fix the file, or delete it to start over, then run -Setup again.') }
         }
         # Write the new flint.ini before plugins change, so a folder that cannot take it fails while nothing has
         # changed. If a plugin then fails, the previous flint.ini stays; afterwards only a rename remains.

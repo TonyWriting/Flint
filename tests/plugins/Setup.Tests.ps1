@@ -107,6 +107,14 @@ try {
     $blankPlugins = Join-Path $TestRoot 'blank-plugins'
     $result = Install-FlintSetup $source $blankConfig $blankPlugins
     Assert-True (-not $result.key_kept -and (Get-Content -LiteralPath $blankConfig -Encoding UTF8)[-1] -ceq 'api_key =') 'A blank key is not kept.'
+    $brokenConfig = Join-Path $TestRoot 'broken.ini'
+    Set-Content -LiteralPath $brokenConfig -Encoding UTF8 -Value @('[model]', $endpoint, 'deployment = team-model', 'api_key = keep-this-key', 'colour = blue')
+    $before = Get-Content -LiteralPath $brokenConfig -Raw -Encoding UTF8
+    $brokenPlugins = Join-Path $TestRoot 'broken-plugins'
+    $message = ''
+    try { $null = Install-FlintSetup $source $brokenConfig $brokenPlugins } catch { $message = $_.Exception.Message }
+    Assert-True ($message -like "*Could not read the current*unknown setting 'colour'*run -Setup again*" -and -not $message.Contains('keep-this-key')) ('Explain why the current flint.ini cannot be kept, without echoing it: ' + $message)
+    Assert-True ((Get-Content -LiteralPath $brokenConfig -Raw -Encoding UTF8) -ceq $before -and -not (Test-Path -LiteralPath $brokenPlugins)) 'An unreadable flint.ini stops setup before its key or the plugins change.'
 
     # Archives from the Azure DevOps download button contain one top-level folder; flint.ini at the root also works.
     $tar = Join-Path $env:SystemRoot 'System32\tar.exe'

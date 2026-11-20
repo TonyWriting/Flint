@@ -242,7 +242,10 @@ function Initialize-FlintAzure {
                 return
             }
             Clear-FlintProgress $Session
-            Write-Host ('Azure sign-in is required. Running {0} once.' -f $login) -ForegroundColor Yellow
+            # A known tenant is passed to the login command, so name it; a mismatch with the expected tenant is then visible.
+            $target = ''
+            if ($Session.Azure.Tenant) { $target = ' for tenant ' + $Session.Azure.Tenant }
+            Write-Host ('Azure sign-in is required. Running {0} once{1}.' -f $login, $target) -ForegroundColor Yellow
             Write-Host 'Sign in with your PROD tenant account.' -ForegroundColor Yellow
             $Session.Azure.LoginAttempted = $true
             Invoke-FlintAzureAuth $Session login
