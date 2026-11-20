@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'TestSupport.ps1')
 $savedEnvironment = @{}
-$secretNames = @('AZURE_OPENAI_API_KEY', 'FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')
+$secretNames = @('FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')
 
 function New-FakeAzModule {
     param([string]$Root, [string]$Version, [string[]]$Body)
@@ -57,7 +57,7 @@ try {
         '    $script:State.LoginCalls++'
         '    $script:State.LoginTenant = $Tenant'
         '    $script:State.LoginSelectorOff = $script:State.SelectorOff'
-        '    $script:State.LoginEnvironmentClean = -not ((Test-Path Env:AZURE_OPENAI_API_KEY) -or (Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:FLINT_AZURE_ACCESS_TOKEN))'
+        '    $script:State.LoginEnvironmentClean = -not ((Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:FLINT_AZURE_ACCESS_TOKEN))'
         '    if ($script:State.LoginFailure) { throw ''User canceled authentication.'' }'
         '    $script:State.Context = New-FakeContext'
         '    $script:State.TokenFailure = '''''

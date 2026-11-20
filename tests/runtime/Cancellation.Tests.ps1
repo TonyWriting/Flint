@@ -31,7 +31,6 @@ if ($ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage') { $Ex
 Set-Location -LiteralPath $TestRoot
 $script:TestRoot = $TestRoot
 $session = New-AgentSession -ConfigFile (Join-Path $TestRoot 'flint.ini') -MaxParallelTools 1 -PluginDirectory (Join-Path $TestRoot 'plugins')
-$session.PermissionSessionDirectory = Join-Path $TestRoot 'permissions'
 if ($During -eq 'Parallel') { $session.MaxParallelTools = 2; $session.WorkerPath = Join-Path $TestRoot 'child.ps1' }
 if ($During -eq 'Azure') {
     $session.Azure = @{ Status = 'ready'; Account = 'user@example.com'; Tenant = 'tenant'; AccessToken = 'private-test-token'; ExpiresUtc = [datetime]::UtcNow.AddHours(1) }

@@ -133,7 +133,7 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     Assert-True ([bool](Get-FlintParallelCall $Session $readCommand)) 'Use reviewed kubectl rules for concurrency eligibility.'
     $unknown = New-ParallelCall run_command @{ executor = 'kubectl'; arguments = @('unclassified'); purpose = 'Claim a read-only operation.' }
     $invocation = New-FlintCommandInvocation $Session (ConvertFrom-Json $unknown.arguments)
-    Save-FlintCommandApproval $Session $invocation
+    $Session.Approvals.kubectl = @($Session.Approvals.kubectl) + (ConvertTo-Json -InputObject $invocation -Depth 16 -Compress)
     Assert-True (-not (Get-FlintParallelCall $Session $unknown)) 'An exact session approval never grants read-only concurrency.'
     Assert-True (-not (Get-FlintParallelCall $Session $write) -and -not (Get-FlintParallelCall $Session (New-ParallelCall unknown_tool @{}))) 'Keep writes and unknown tools out of concurrent batches.'
 

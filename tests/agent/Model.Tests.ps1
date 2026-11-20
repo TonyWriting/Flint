@@ -25,7 +25,7 @@ try {
 function Invoke-RestMethod {
     param($Method, $Uri, $Headers, $TimeoutSec, $MaximumRedirection, $ErrorAction, $ContentType, $Body, $OutFile)
     if ($Method -ne 'Post' -or $Uri -ne 'https://test.services.ai.azure.com/openai/v1/responses' -or $Headers.Authorization -cne 'Bearer test-api-key') { throw 'Incorrect HTTP authentication or endpoint.' }
-    if ((Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:AZURE_OPENAI_API_KEY)) { throw 'Worker authentication must be removed from its environment.' }
+    if (Test-Path Env:FLINT_MODEL_API_KEY) { throw 'Worker authentication must be removed from its environment.' }
     if ($Body.Contains('test-api-key')) { throw 'Model credentials appeared in the request payload.' }
     if ($MaximumRedirection -ne 0 -or $TimeoutSec -le 0 -or $ContentType -ne 'application/json; charset=utf-8') { throw 'Incorrect HTTP request options.' }
     $metadata = @{ request_path = $RequestPath; response_path = $OutFile; language_mode = [string]$ExecutionContext.SessionState.LanguageMode }

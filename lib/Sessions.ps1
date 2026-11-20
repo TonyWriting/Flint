@@ -22,12 +22,7 @@ function New-AgentSession {
     }
     if (-not $TrajectoryDirectory) { $TrajectoryDirectory = Join-Path $root.FullName '.flint\trajectories' }
     $logDirectory = New-Item -ItemType Directory -Path $TrajectoryDirectory -Force -ErrorAction Stop
-    if ($logDirectory.PSProvider.Name -ne 'FileSystem') { throw 'TrajectoryDirectory must be a filesystem directory.' }
-    $check = $logDirectory.FullName
-    while ($check) {
-        if ((Get-Item -LiteralPath $check -Force -ErrorAction Stop).Attributes -band 1024) { throw 'Trajectory directories cannot use junctions or symlinks.' }
-        $check = Split-Path $check -Parent
-    }
+    Assert-FlintNoLinkInPath $logDirectory.FullName 'TrajectoryDirectory must be a filesystem directory without junctions or symlinks.'
     $saved = $null
     if ($Resume) { $saved = Read-FlintSession $Resume $logDirectory.FullName $root.FullName }
     $started = [datetime]::UtcNow; $sequence = 0; $startEvent = 'session_started'
@@ -45,14 +40,14 @@ function New-AgentSession {
         ApiKey = $config.ApiKey; ApiKeyHelp = $config.ApiKeyHelp; ApiEndpoint = $config.ApiEndpoint
         History = @(); Tools = @(Get-AgentTools); Instructions = Get-FlintInstructions -Plugins @($plugins.loaded)
         TrajectoryPath = $logPath; EventSequence = $sequence; LogFailed = $false
-        ConfigPath = $config.ConfigPath; EntryPath = Join-Path $installRoot 'agent.ps1'
+        EntryPath = Join-Path $installRoot 'agent.ps1'
         ResumeReady = $false; ResumedFrom = $Resume
         NoAzure = [bool]$NoAzure
         Azure = @{ Initialized = $false; Status = 'unavailable'; Message = 'Azure has not been initialized. Restart Flint to initialize Azure authentication.' }
         ProtectedPaths = @($config.ConfigPath, $logDirectory.FullName)
-        PluginDirectory = $PluginDirectory; Plugins = @($plugins.loaded); PluginErrors = @($plugins.errors); PluginChanges = @()
+        Plugins = @($plugins.loaded); PluginErrors = @($plugins.errors)
         CommandRules = @{ kubectl = $commandRules }; GuardedPatchResources = @($guarded | Sort-Object)
-        PermissionSessionDirectory = Join-Path $installRoot '.flint\permissions'
+        Approvals = @{ kubectl = @(); azure = @(); files = @() }
         RequestTimeoutSec = $RequestTimeoutSec; ToolTimeoutSec = $ToolTimeoutSec
         TurnLimit = 20
         MaxToolCalls = $MaxToolCalls; MaxParallelTools = $MaxParallelTools; MaxOutputTokens = $MaxOutputTokens
@@ -77,12 +72,6 @@ function New-AgentSession {
             $session.OmittedOutputs[[string]$item.call_id] = $placeholder.output
         }
         if ($saved.model -cne $session.Model) { $session.LastInputTokens = $null; $session.LastOutputTokens = $null; $session.EstimatedTokens = 0 }
-        # Installed plugins stay authoritative, like tools; the conversation learns which earlier guidance may be stale.
-        $session.PluginChanges = @(Get-FlintPluginChanges $saved.plugins @(Get-FlintPluginRecords $session.Plugins))
-        if ($session.PluginChanges.Count -gt 0) {
-            $session.History += @{ role = 'developer'; content = ('Installed plugins changed since this conversation was saved: ' + ($session.PluginChanges -join '; ') +
-                '. Guidance, documentation paths and automatic reads from earlier turns may no longer apply. Read the current plugin guide before relying on them.') }
-        }
     }
     # Instructions and tools are logged once per process; model requests reference them.
     Write-FlintEvent $session $startEvent @{
@@ -91,7 +80,7 @@ function New-AgentSession {
         tool_timeout_sec = $ToolTimeoutSec; max_tool_calls = $MaxToolCalls; max_parallel_tools = $MaxParallelTools
         context_window = $ContextWindow; max_output_tokens = $MaxOutputTokens; reasoning_effort = $Effort
         resumed_from = $Resume; instructions = $session.Instructions; tools = $session.Tools
-        plugins = @(Get-FlintPluginRecords $session.Plugins); plugin_errors = @($session.PluginErrors); plugin_changes = @($session.PluginChanges)
+        plugins = @(Get-FlintPluginRecords $session.Plugins); plugin_errors = @($session.PluginErrors)
     }
     Write-FlintCheckpoint $session
     return $session
@@ -146,7 +135,6 @@ function Write-FlintCheckpoint {
     Write-FlintEvent $Session 'session_checkpoint' @{
         version = 3; root = $Session.Root; model = $Session.Model; history_count = $Session.HistoryLogged
         omitted_call_ids = @($Session.OmittedOutputs.Keys | Sort-Object); state = $state
-        plugins = @(Get-FlintPluginRecords $Session.Plugins)
     } -BestEffort:$BestEffort
     $Session.ResumeReady = -not $Session.LogFailed
 }
@@ -197,8 +185,7 @@ function Read-FlintSession {
     $state = @{ History = $history }
     foreach ($name in @(Get-FlintCheckpointFields)) { $state[$name] = $checkpoint.state.$name }
     return @{
-        version = $checkpoint.version; root = $checkpoint.root; model = $checkpoint.model; state = $state; omitted_call_ids = $omitted
+        model = $checkpoint.model; state = $state; omitted_call_ids = $omitted
         id = $Id.ToLowerInvariant(); trajectory_path = $files[0].FullName; event_sequence = $sequence; started = $started
-        plugins = @($checkpoint.plugins | Where-Object { $null -ne $_ })
     }
 }

@@ -12,7 +12,7 @@ function Add-FlintStopNote {
 }
 
 function Invoke-AgentTurn {
-    param([hashtable]$Session, [string]$UserPrompt, [int]$TurnLimit = 20)
+    param([hashtable]$Session, [string]$UserPrompt, [int]$TurnLimit = $Session.TurnLimit)
     $started = [datetime]::UtcNow
     $reason = 'cancelled'
     $detail = ''

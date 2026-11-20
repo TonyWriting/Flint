@@ -7,14 +7,7 @@ function Get-FlintResultDirectory {
 function Assert-FlintResultPath {
     param([string]$Path)
     if ($Path -notmatch '^[A-Za-z]:[\\/]' -or $Path.Length -gt 240) { throw 'Result files require a local absolute path of at most 240 characters.' }
-    $current = $Path
-    while ($current) {
-        if (Test-Path -LiteralPath $current) {
-            $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
-            if ($item.PSProvider.Name -ne 'FileSystem' -or ($item.Attributes -band 1024)) { throw 'Result files cannot use symlinks or junctions.' }
-        }
-        $current = Split-Path $current -Parent
-    }
+    Assert-FlintNoLinkInPath $Path 'Result files cannot use symlinks or junctions.'
 }
 
 function Assert-FlintResultJsonDepth {

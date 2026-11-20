@@ -20,7 +20,7 @@ class Recorder {
     }
     static int Main(string[] args) {
         Console.OutputEncoding = new UTF8Encoding(false);
-        if (Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") != null || Environment.GetEnvironmentVariable("FLINT_MODEL_API_KEY") != null) return 98;
+        if (Environment.GetEnvironmentVariable("FLINT_MODEL_API_KEY") != null) return 98;
         if (args.Length > 0 && args[0] == "fail") { Console.Write("partial"); Console.Error.Write("failure"); return 7; }
         if (args.Length > 0 && args[0] == "empty") return 0;
         if (args.Length > 0 && args[0] == "sleep") Thread.Sleep(30000);
@@ -45,8 +45,8 @@ class Recorder {
     & $compiler /nologo /target:exe ('/out:' + $executable) $source
     Assert-True ($LASTEXITCODE -eq 0) 'Compile the offline native command fixture.'
     $env:PATH = $TestRoot
-    $savedKey = $env:AZURE_OPENAI_API_KEY; $env:AZURE_OPENAI_API_KEY = 'must-not-reach-command'
-    try { $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('version', '--client') } } finally { $env:AZURE_OPENAI_API_KEY = $savedKey }
+    $savedKey = $env:FLINT_MODEL_API_KEY; $env:FLINT_MODEL_API_KEY = 'must-not-reach-command'
+    try { $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('version', '--client') } } finally { $env:FLINT_MODEL_API_KEY = $savedKey }
     Assert-True ($result.status -eq 'ok' -and $result.output -ceq '["version","--client"]') ('Execute validated arguments in a constrained worker without inherited credentials. ' + $result.output)
     $unicode = ConvertFrom-Json '"\u4f60\u597d"'
     $tokens = @('echo', '', 'a b', 'a"b', 'C:\path with spaces\', 'x\\"y', 'a&b|c>file', '%PATH%', '!value!', '$(whoami)', $unicode)

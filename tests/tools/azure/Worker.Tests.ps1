@@ -7,7 +7,7 @@ try {
 function Invoke-RestMethod {
     param($Method, $Uri, $Headers, $ContentType, $Body, $TimeoutSec, $MaximumRedirection, $OutFile, $ErrorAction)
     if ($Headers.Authorization -cne 'Bearer test-api-key') { throw 'Worker authentication is missing.' }
-    if ((Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:AZURE_OPENAI_API_KEY)) { throw 'Worker authentication was not removed from the environment.' }
+    if (Test-Path Env:FLINT_MODEL_API_KEY) { throw 'Worker authentication was not removed from the environment.' }
     Set-Content -LiteralPath $OutFile -Value '{"status":"completed","output":[]}' -Encoding UTF8
 }
 '@
@@ -15,7 +15,7 @@ function Invoke-RestMethod {
 function Invoke-WebRequest {
     [CmdletBinding()]param($Method, $Uri, $Headers, $TimeoutSec, $MaximumRedirection, [switch]$UseBasicParsing)
     if ($Headers.Authorization -cne 'Bearer private-worker-token' -or -not $UseBasicParsing -or $MaximumRedirection -ne 0) { throw 'Incorrect Azure worker transport.' }
-    if ((Test-Path Env:FLINT_AZURE_ACCESS_TOKEN) -or (Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:AZURE_OPENAI_API_KEY)) { throw 'Worker authentication remains in its environment.' }
+    if ((Test-Path Env:FLINT_AZURE_ACCESS_TOKEN) -or (Test-Path Env:FLINT_MODEL_API_KEY)) { throw 'Worker authentication remains in its environment.' }
     if ($Uri -like '*fixture=transport-failure') { throw 'Fixture connection failed.' }
     if ($Uri -like '*fixture=accepted') {
         return @{ StatusCode = 202; Content = ''; Headers = @{ 'Azure-AsyncOperation' = 'https://management.azure.com/providers/Microsoft.Test/operations/123?api-version=2026-01-01'; 'Retry-After' = '5'; 'x-ms-request-id' = 'worker-request-id' } }
@@ -32,7 +32,7 @@ function Invoke-WebRequest {
 '@
     foreach ($worker in @('lib\ModelWorker.Implementation.ps1', 'tools\Worker.Implementation.ps1')) {
         Add-Content -LiteralPath (Join-Path $app $worker) -Encoding UTF8 -Value @'
-if ((Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:AZURE_OPENAI_API_KEY) -or (Test-Path Env:FLINT_AZURE_ACCESS_TOKEN)) { throw 'Worker authentication was not removed from the environment.' }
+if ((Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:FLINT_AZURE_ACCESS_TOKEN)) { throw 'Worker authentication was not removed from the environment.' }
 Set-Content -LiteralPath ($RequestPath + '.mode') -Value ([string]$ExecutionContext.SessionState.LanguageMode) -Encoding ASCII
 '@
     }

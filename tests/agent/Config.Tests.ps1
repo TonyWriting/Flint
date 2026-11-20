@@ -16,7 +16,6 @@ function Assert-Throws {
     Assert-True ($message -like $Pattern) "Expected '$Pattern'; got '$message'."
 }
 
-$savedKey = $env:AZURE_OPENAI_API_KEY
 $testParent = (Get-Item -LiteralPath $env:TEMP -Force).FullName.TrimEnd('\')
 $testRoot = Join-Path $testParent ('flint-config-tests-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot | Out-Null
@@ -66,7 +65,6 @@ try {
     $session = New-AgentSession -ConfigFile $config
     Assert-True ($session.ApiKeyHelp -ceq 'Get a new key from the team vault; ask #flint-help.' -and (Read-FlintConfig $config).ApiKeyHelp) 'Keep the optional key help for rejected keys.'
 
-    $env:AZURE_OPENAI_API_KEY = 'environment-key'
     foreach ($case in @(
         @{ lines = @('[model]', $endpoint, $deployment); pattern = '*Set api_key under `[model`]*' },
         @{ lines = @('[model]', $endpoint, $deployment, 'api_key_help = Ask the team for the key.', 'api_key ='); pattern = '*Set api_key under `[model`]. Ask the team for the key.*' },
@@ -108,7 +106,6 @@ try {
     Write-Host 'All config tests passed.'
 } finally {
     Pop-Location
-    if ($null -eq $savedKey) { Remove-Item -LiteralPath Env:AZURE_OPENAI_API_KEY -ErrorAction SilentlyContinue } else { $env:AZURE_OPENAI_API_KEY = $savedKey }
     $resolvedTestRoot = (Resolve-Path -LiteralPath $testRoot).ProviderPath
     if ($resolvedTestRoot -ne $testRoot -or (Split-Path $resolvedTestRoot -Parent) -ne $testParent) {
         throw 'Refusing cleanup outside the temporary config test directory.'

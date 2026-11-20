@@ -134,7 +134,6 @@ $config = Join-Path $script:TestRoot 'flint.ini'
 Set-Content -LiteralPath $config -Encoding UTF8 -Value (Get-TestConfigLines)
 Push-Location -LiteralPath $script:WorkRoot
 try { $script:Session = New-AgentSession -ConfigFile $config } finally { Pop-Location }
-$script:Session.PermissionSessionDirectory = Join-Path $script:TestRoot 'permissions'
 $script:Session.WorkerPath = New-TestWorkerLauncher $script:Session.WorkerPath (Join-Path $script:TestRoot 'tool-launcher.ps1')
 $script:Session.ModelWorkerPath = New-TestWorkerLauncher $script:Session.ModelWorkerPath (Join-Path $script:TestRoot 'model-launcher.ps1')
 Write-Host ('Testing PowerShell {0}, {1}' -f $PSVersionTable.PSVersion, $ExecutionContext.SessionState.LanguageMode)

@@ -56,7 +56,6 @@ try {
     Write-FlintCheckpoint $Session
     Push-Location -LiteralPath $WorkRoot
     try { $script:Session = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
-    $Session.PermissionSessionDirectory = Join-Path $TestRoot 'permissions'
     Set-OperationFixtureIdentity
     $done = Invoke-OperationFixture GET $running.poll_path
     Assert-True ($done.status -eq 'ok' -and $done.operation_status -eq 'Succeeded') 'Recognize a terminal status after restoring the operation from the conversation.'

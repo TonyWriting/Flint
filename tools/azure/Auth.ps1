@@ -28,7 +28,7 @@ function Get-FlintAzureLoginCommand {
 function Hide-FlintAzureSecretEnvironment {
     param([hashtable]$Saved)
     # Sign-in processes, including browsers they open, must not inherit Flint secrets.
-    foreach ($name in @('AZURE_OPENAI_API_KEY', 'FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')) {
+    foreach ($name in @('FLINT_MODEL_API_KEY', 'FLINT_AZURE_ACCESS_TOKEN')) {
         $Saved[$name] = (Get-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue).Value
         Remove-Item -LiteralPath ('Env:' + $name) -ErrorAction SilentlyContinue
     }
@@ -75,17 +75,13 @@ function Invoke-FlintAzureCli {
     switch ($Operation) {
         'account' { $arguments = @('account', 'show') }
         'token' {
-            Assert-FlintAzureTenant $Session.Azure.Tenant
             $resource = 'https://management.azure.com/'
             if ($Service -eq 'keyvault') { $resource = 'https://vault.azure.net' }
             $arguments = @('account', 'get-access-token', '--tenant', $Session.Azure.Tenant, '--resource', $resource)
         }
         'login' {
             $arguments = @('login', '--allow-no-subscriptions')
-            if ($Session.Azure.Tenant) {
-                Assert-FlintAzureTenant $Session.Azure.Tenant
-                $arguments += @('--tenant', $Session.Azure.Tenant)
-            }
+            if ($Session.Azure.Tenant) { $arguments += @('--tenant', $Session.Azure.Tenant) }
         }
     }
     $format = 'json'
@@ -135,7 +131,6 @@ function Invoke-FlintAzurePowerShell {
             return @{ user = @{ name = [string]$context.Account.Id; type = $type }; tenantId = [string]$context.Tenant.Id; environmentName = [string]$context.Environment.Name }
         }
         'token' {
-            Assert-FlintAzureTenant $Session.Azure.Tenant
             $resource = 'https://management.azure.com/'
             if ($Service -eq 'keyvault') { $resource = 'https://vault.azure.net' }
             $parameters = @{ ResourceUrl = $resource; TenantId = $Session.Azure.Tenant; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
@@ -157,10 +152,7 @@ function Invoke-FlintAzurePowerShell {
         }
         'login' {
             $parameters = @{ ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
-            if ($Session.Azure.Tenant) {
-                Assert-FlintAzureTenant $Session.Azure.Tenant
-                $parameters.Tenant = $Session.Azure.Tenant
-            }
+            if ($Session.Azure.Tenant) { $parameters.Tenant = $Session.Azure.Tenant }
             $configCommand = Get-Command -Name Update-AzConfig -ErrorAction SilentlyContinue
             $previousEnvironment = @{}
             try {
@@ -177,6 +169,8 @@ function Invoke-FlintAzurePowerShell {
 
 function Invoke-FlintAzureAuth {
     param([hashtable]$Session, [ValidateSet('account', 'login', 'token')][string]$Operation, [ValidateSet('arm', 'keyvault')][string]$Service = 'arm')
+    # The tenant reaches a command line or cmdlet parameter, so it is checked once here.
+    if ($Operation -ne 'account' -and ($Operation -eq 'token' -or $Session.Azure.Tenant)) { Assert-FlintAzureTenant $Session.Azure.Tenant }
     if ($Session.Azure.Provider -ceq 'powershell') { return Invoke-FlintAzurePowerShell $Session $Operation -Service $Service }
     return Invoke-FlintAzureCli $Session $Operation -Service $Service
 }
@@ -192,7 +186,6 @@ function Set-FlintAzureIdentity {
     if ($Session.Azure.Account -and $account.user.name -ine $Session.Azure.Account) { throw ('{0} account changed. Restart Flint to select an account.' -f $provider) }
     $Session.Azure.Account = [string]$account.user.name
     if (-not $Session.Azure.Tenant) { $Session.Azure.Tenant = [string]$account.tenantId }
-    Assert-FlintAzureTenant $Session.Azure.Tenant
 }
 
 function Update-FlintAzureToken {
@@ -212,7 +205,6 @@ function Update-FlintAzureToken {
             if ($Session.Azure.Provider -ceq 'powershell') { throw 'Azure PowerShell returned an incomplete token. Update the Az.Accounts module.' }
             throw 'Azure CLI returned an incomplete token or a different identity. A current Azure CLI with expires_on support is required.'
         }
-        Assert-FlintAzureTenant $token.tenant
         if ($token.tenant -ine $Session.Azure.Tenant) { throw ('{0} returned a token for a different tenant.' -f $provider) }
         $expiresUtc = ([datetime]'1970-01-01T00:00:00Z').ToUniversalTime().AddSeconds([long]$token.expires_on)
         if ($expiresUtc -le ([datetime]::UtcNow).AddSeconds(30)) { throw ('{0} returned an expired token. Restart Flint to sign in to Azure.' -f $provider) }

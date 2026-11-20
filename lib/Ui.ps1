@@ -11,9 +11,6 @@ function Show-FlintSession {
         foreach ($failure in @($Session.PluginErrors | Where-Object { $_ })) { Write-Host ("Plugin '" + $failure.name + "' was not loaded. /status shows why.") -ForegroundColor Yellow }
     }
     if ($Session.ResumedFrom) { Write-Host 'Conversation restored. Send a message to continue.' -ForegroundColor DarkGray }
-    if ($Session.ResumedFrom -and @($Session.PluginChanges).Count -gt 0) {
-        Write-Host (Protect-FlintText $Session ('Plugins changed since this conversation was saved: ' + ($Session.PluginChanges -join '; '))) -ForegroundColor Yellow
-    }
     if (-not $Details) { Write-Host 'Type a message. /help for commands.' -ForegroundColor DarkGray; return }
     $limit = 'not configured'
     if ($Session.ContextWindow -gt 0) { $limit = [string]$Session.ContextWindow }
@@ -45,7 +42,6 @@ function Show-FlintSession {
 }
 
 function Show-FlintHelp {
-    param([hashtable]$Session)
     Write-Host ''
     Write-Host '  /status        Session details and trajectory path'
     Write-Host '  /c, /continue  Continue the task that was stopped'

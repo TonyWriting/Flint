@@ -44,7 +44,7 @@ try {
         @{ a = @('get', '--context', 'delete', 'pods', '--namespace', 'ns') }
     )) { Assert-True ((Invoke-CommandFixture $tokens.a).status -eq 'denied') 'Do not infer safety from a prefix, verb, extra flag, or duplicate option.' }
     Assert-True ($Executions.Count -eq 4) 'Denied commands never reach the worker.'
-    Assert-True (-not (Test-Path -LiteralPath $Session.PermissionSessionDirectory)) 'Declining commands never creates an approval file.'
+    Assert-True (@($Session.Approvals.kubectl).Count -eq 0) 'Declining commands never records an approval.'
 
     $script:Answers = @('n')
     Assert-True ((Invoke-CommandFixture @('get', 'pods', '--context', 'cluster', '--namespace', 'ns') kubectl).status -eq 'ok') 'Query configured Kubernetes resource kinds without fixed cluster targets.'
@@ -52,8 +52,7 @@ try {
     $unknown = @('new-command', '--foo', 'A', '--bar', 'B')
     $script:Answers = @('y')
     Assert-True ((Invoke-CommandFixture $unknown).status -eq 'ok') 'Approve an unknown invocation.'
-    $file = Get-FlintApprovalFile $Session kubectl
-    Assert-True (Test-Path -LiteralPath $file) 'Save exact approval under the session and executor.'
+    Assert-True (@($Session.Approvals.kubectl).Count -eq 1) 'Keep the exact approval for this session.'
     $count = $Prompts
     Assert-True ((Invoke-CommandFixture $unknown).status -eq 'ok' -and $Prompts -eq $count) 'Reuse only an identical approved invocation.'
     $script:Answers = @('n', 'n')
@@ -68,10 +67,11 @@ try {
         $env:KUBECONFIG = 'changed-context'; $script:Answers = @('n')
         Assert-True ((Invoke-CommandFixture $unknown).status -eq 'denied') 'Changed environment selectors require approval.'
     } finally { $env:KUBECONFIG = $savedConfigDir }
-    $originalId = $Session.Id; $Session.Id = [guid]::NewGuid().ToString('N'); $script:Answers = @('n')
-    Assert-True ((Invoke-CommandFixture $unknown).status -eq 'denied') 'A new session never inherits approval.'
-    $Session.Id = $originalId
-    Assert-True ((Invoke-CommandFixture $unknown).status -eq 'ok') 'The same resumed session can reload its exact approval.'
+    # Approvals live in memory, so a new Flint process, including -Resume, starts without them.
+    $granted = $Session.Approvals.kubectl; $Session.Approvals.kubectl = @(); $script:Answers = @('n')
+    Assert-True ((Invoke-CommandFixture $unknown).status -eq 'denied') 'A new Flint process never inherits approval.'
+    $Session.Approvals.kubectl = $granted
+    Assert-True ((Invoke-CommandFixture $unknown).status -eq 'ok') 'An exact approval lasts for the rest of the process.'
 
     $write = @('delete', 'pods', 'a', '--context', 'cluster', '--namespace', 'ns')
     $script:Answers = @('y'); $count = $Prompts
@@ -88,12 +88,6 @@ try {
     $Session.ToolTimeoutSec = 1; $script:ApprovalDelay = 1300; $script:Answers = @('y')
     Assert-True ((Invoke-CommandFixture @('slow-approval')).status -eq 'ok' -and $Executions[-1].timeout -gt 0.5) 'Human approval does not consume the worker timeout.'
     $script:ApprovalDelay = 0; $Session.ToolTimeoutSec = 30
-    $approvalDirectory = $Session.PermissionSessionDirectory
-    $Session.PermissionSessionDirectory = Join-Path $TestRoot 'blocked-cache'
-    Set-Content -LiteralPath $Session.PermissionSessionDirectory -Value 'not a directory' -Encoding UTF8
-    $script:Answers = @('y'); $count = $Executions.Count
-    Assert-True ((Invoke-CommandFixture @('cannot-save')).status -eq 'error' -and $Executions.Count -eq $count) 'Do not execute when the approved invocation cannot be persisted.'
-    $Session.PermissionSessionDirectory = $approvalDirectory
     $rulesFile = Join-Path $TestRoot 'invalid-kubectl.json'
     Set-Content -LiteralPath $rulesFile -Value '{broken' -Encoding UTF8
     Assert-Throws { Read-FlintCommandRuleFile $rulesFile kubectl core } '*not valid JSON*'
@@ -109,9 +103,7 @@ try {
     Assert-True ($null -ne (Get-FlintParallelCall $Session $readCall)) 'Re-evaluate restored rules without retaining a stale decision.'
     $events = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ })
     Assert-True (@($events | Where-Object { $_.event -eq 'command_permission' -and $_.data.source -eq 'fixed_read' -and $_.data.rule_source -ceq 'core' }).Count -gt 0) 'Record which rule set authorized each automatic read.'
-    Set-Content -LiteralPath $file -Value '{"version":1,"session_id":"wrong","executor":"kubectl","calls":[]}' -Encoding UTF8
-    Assert-True ((Invoke-CommandFixture $unknown).status -eq 'error') 'Reject a mismatched approval file.'
-    Remove-Item -LiteralPath $file -Force
+
 
     foreach ($arguments in @(
         '{"executor":"kubectl","arguments":"vm show","purpose":"Inspect the fixture."}',

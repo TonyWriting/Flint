@@ -55,7 +55,7 @@ try {
     Assert-True ($frame.Contains('Stopping after the current step')) 'Show that a stop request is pending.'
     Stop-FlintTurnUi $Session
     $Session.StopRequested = $false; $Session.Ui.Live = $false
-    $help = (Show-FlintHelp $Session 6>&1) | Out-String
+    $help = (Show-FlintHelp 6>&1) | Out-String
     Assert-True ($help.Contains('/c, /continue') -and $help.Contains('  s ')) 'Document stopping and resuming in /help.'
 
     # From here on, the key probe is replaced; the turn, worker and process code stay real.

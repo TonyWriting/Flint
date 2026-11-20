@@ -27,12 +27,18 @@ function Get-FlintKubectlOption {
     return $value
 }
 
+function Test-FlintKubectlMutation {
+    param([string[]]$Arguments)
+    # rollout status and rollout history only read; every other listed verb changes cluster state.
+    if ($Arguments[0] -ceq 'rollout' -and $Arguments[1] -cin @('status', 'history')) { return $false }
+    return $Arguments[0] -cin @('patch', 'scale', 'rollout', 'delete', 'apply', 'replace', 'create', 'annotate', 'label', 'edit')
+}
+
 function Assert-FlintKubectlMutation {
     param([string[]]$Arguments, [string[]]$GuardedResources = @())
     if ($Arguments[0].StartsWith('-')) { throw 'Put the kubectl command path before options.' }
     if ($Arguments[0] -ceq 'patch' -and ($Arguments.Count -lt 3 -or $Arguments[1].StartsWith('-'))) { throw 'Put the patch resource type and name before options.' }
-    if ($Arguments[0] -ceq 'rollout' -and $Arguments[1] -cin @('status', 'history')) { return }
-    if ($Arguments[0] -cnotin @('patch', 'scale', 'rollout', 'delete', 'apply', 'replace', 'create', 'annotate', 'label', 'edit')) { return }
+    if (-not (Test-FlintKubectlMutation $Arguments)) { return }
     $context = Get-FlintKubectlOption $Arguments '--context'
     if (-not $context) { throw 'Resource changes require an explicit --context.' }
     $namespace = Get-FlintKubectlOption $Arguments '--namespace'
@@ -105,9 +111,7 @@ function Invoke-FlintCommand {
     $retryable = $native.status -eq 'error' -and $output -match '(?i)connection reset|temporarily unavailable|ServiceUnavailable|TLS handshake timeout|i/o timeout|TooManyRequests'
     $result = @{ status = $native.status; exit_code = $native.exit_code; output = $output; retryable = [bool]$retryable; duration_ms = $native.duration_ms }
     $result.capture_incomplete = $native.status -notin @('ok', 'error')
-    $mutating = $ToolArguments.arguments[0] -cin @('patch', 'scale', 'rollout', 'delete', 'apply', 'replace', 'create', 'annotate', 'label')
-    if ($ToolArguments.arguments[0] -ceq 'rollout' -and $ToolArguments.arguments[1] -cin @('status', 'history')) { $mutating = $false }
-    if ($mutating) {
+    if (Test-FlintKubectlMutation $ToolArguments.arguments) {
         $result.verification_required = $true
         $result.outcome_unknown = $native.status -ne 'ok'
     }

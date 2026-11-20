@@ -33,7 +33,7 @@ function Invoke-WebRequest {
     if ($Uri -match 'fixture=([a-z]+)') { $name = $Matches[1] }
     if ($Uri -match 'vault\.azure\.net') { $name = 'keyvault'; $token = 'parallel-keyvault-token' }
     if ($Headers.Authorization -cne ('Bearer ' + $token)) { throw 'Incorrect worker token audience.' }
-    if ((Test-Path Env:FLINT_AZURE_ACCESS_TOKEN) -or (Test-Path Env:FLINT_MODEL_API_KEY) -or (Test-Path Env:AZURE_OPENAI_API_KEY)) { throw 'Worker authentication remains in its environment.' }
+    if ((Test-Path Env:FLINT_AZURE_ACCESS_TOKEN) -or (Test-Path Env:FLINT_MODEL_API_KEY)) { throw 'Worker authentication remains in its environment.' }
     $requestText = Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8
     if ($requestText.Contains($token) -or $requestText.Contains('test-api-key')) { throw 'Worker request contains authentication.' }
     $counter = Join-Path $PSScriptRoot ($name + '.count')

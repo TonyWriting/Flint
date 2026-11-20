@@ -102,7 +102,7 @@ try {
     Push-Location -LiteralPath $WorkRoot
     try { $loop = New-AgentSession -ConfigFile $config }
     finally { Pop-Location }
-    $loop.WorkerPath = $Session.WorkerPath; $loop.PermissionSessionDirectory = $Session.PermissionSessionDirectory
+    $loop.WorkerPath = $Session.WorkerPath
     $loop.MaxRequestChars = 150000
     foreach ($index in 1..4) { Set-Content -LiteralPath (Join-Path $WorkRoot ('loop' + $index + '.txt')) -Value (('loop-page-' + $index + ' ') + ('z' * 20000)) -Encoding UTF8 -NoNewline }
     $script:LoopPayloads = @()

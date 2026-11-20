@@ -75,13 +75,13 @@ if ($MyInvocation.InvocationName -ne '.') {
         Initialize-FlintAzure $session
         if ($session.ResumedFrom) { Show-FlintHistory $session }
         if ($Prompt) {
-            $answer = Invoke-AgentTurn -Session $session -UserPrompt $Prompt -TurnLimit $MaxTurns
+            $answer = Invoke-AgentTurn -Session $session -UserPrompt $Prompt
             if ($null -ne $answer) { Show-FlintAnswer $session $answer }
         } else {
             while ($true) {
                 $userPrompt = Read-FlintPrompt $session
                 if ($null -eq $userPrompt -or $userPrompt -in @('exit', 'quit', '/exit')) { break }
-                if ($userPrompt -eq '/help') { Show-FlintHelp $session; continue }
+                if ($userPrompt -eq '/help') { Show-FlintHelp; continue }
                 if ($userPrompt -eq '/status') { Show-FlintSession $session -Details; continue }
                 if ([string]::IsNullOrWhiteSpace($userPrompt)) { continue }
                 if ($userPrompt -in @('/c', '/continue')) {
@@ -89,7 +89,7 @@ if ($MyInvocation.InvocationName -ne '.') {
                     $userPrompt = Get-FlintContinuePrompt
                 } elseif ($userPrompt.StartsWith('/')) { Write-Host 'Unknown command. Use /help.' -ForegroundColor Yellow; continue }
                 try {
-                    $answer = Invoke-AgentTurn -Session $session -UserPrompt $userPrompt -TurnLimit $MaxTurns
+                    $answer = Invoke-AgentTurn -Session $session -UserPrompt $userPrompt
                     if ($null -ne $answer) { Show-FlintAnswer $session $answer }
                 } catch {
                     Show-FlintError $session $_.Exception.Message

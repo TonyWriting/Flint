@@ -28,7 +28,7 @@ try {
     $null = Read-FlintPrompt $Session
     Assert-True ((Get-UiText).Trim() -ceq '>') 'Keep usage details out of the input area.'
     $script:Writes = @()
-    Show-FlintHelp $Session
+    Show-FlintHelp
     Assert-True ((Get-UiText).Contains('Ctrl+C') -and -not (Get-UiText).Contains('Esc') -and -not (Get-UiText).Contains('Shift+Enter')) 'Advertise only supported input shortcuts.'
 
     # Blank entries: the console echoes Enter as a newline, so ANSI moves back up and redraws the prompt.

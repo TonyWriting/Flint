@@ -29,7 +29,6 @@ try {
     $baseInstructions = $Session.Instructions
     Push-Location -LiteralPath $WorkRoot
     try { $script:Session = New-AgentSession -ConfigFile $config } finally { Pop-Location }
-    $Session.PermissionSessionDirectory = Join-Path $TestRoot 'permissions'
 
     Assert-True (@($Session.Plugins).Count -eq 1 -and $Session.Plugins[0].name -ceq 'example') 'Load valid plugins and skip staging directories.'
     $errors = @($Session.PluginErrors | ForEach-Object { $_.name }) -join ','
@@ -99,28 +98,14 @@ try {
     $guide = Invoke-FlintFileTool $Session.Root read_file @{ path = $Session.Plugins[0].guide; start_line = 1; start_column = 1; max_lines = 50 } $Session.ProtectedPaths -SessionId $Session.Id
     Assert-True ($guide.status -eq 'ok' -and $guide.output.Contains('reconciled by the example controller')) 'The model can read the plugin guide named in its instructions.'
 
-    # Resume keeps the conversation and tells the model when the installed plugins changed.
+    # A resumed conversation uses the plugins installed now and keeps its history as saved.
     Write-FlintCheckpoint $Session
-    $checkpoint = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json $_ } | Where-Object { $_.event -eq 'session_checkpoint' })[-1]
-    Assert-True ($checkpoint.data.version -eq 3 -and $checkpoint.data.plugins[0].version -ceq '1.0.0') 'Checkpoint the plugin set with the conversation.'
     $historyCount = @($Session.History).Count
-    Push-Location -LiteralPath $WorkRoot
-    try { $same = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
-    Assert-True (@($same.PluginChanges).Count -eq 0 -and @($same.History).Count -eq $historyCount) 'An unchanged plugin set adds nothing on resume.'
     $null = New-TestPlugin (Join-Path $plugins 'example') -Version '1.1.0'
     $null = New-TestPlugin (Join-Path $plugins 'extra') -Name 'extra'
     Push-Location -LiteralPath $WorkRoot
     try { $changed = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
-    $changes = @($changed.PluginChanges) -join '; '
-    Assert-True ($changes -ceq 'example 1.0.0 -> 1.1.0; added extra 1.0.0') ('Report plugin changes on resume: ' + $changes)
-    $note = @($changed.History)[-1]
-    Assert-True ($note.role -ceq 'developer' -and $note.content.Contains('example 1.0.0 -> 1.1.0') -and $note.content.Contains('Read the current plugin guide')) 'Tell the model which plugin guidance may be stale.'
-    Assert-True ($changed.Instructions.Contains('- example 1.1.0:') -and $changed.Instructions.Contains('- extra 1.0.0:')) 'Resumed sessions use the plugins installed now.'
-    $resumedBanner = (Show-FlintSession $changed 6>&1 | Out-String)
-    Assert-True ($resumedBanner.Contains('Plugins changed since this conversation was saved: example 1.0.0 -> 1.1.0; added extra 1.0.0')) 'Show plugin changes when a conversation is restored.'
-    Push-Location -LiteralPath $WorkRoot
-    try { $again = New-AgentSession -ConfigFile $config -Resume $Session.Id } finally { Pop-Location }
-    Assert-True (@($again.PluginChanges).Count -eq 0 -and @($again.History)[-1].role -ceq 'developer') 'The note is saved once; the next resume compares against the updated checkpoint.'
+    Assert-True ($changed.Instructions.Contains('- example 1.1.0:') -and $changed.Instructions.Contains('- extra 1.0.0:') -and @($changed.History).Count -eq $historyCount) 'Resumed sessions use the plugins installed now.'
 
     Push-Location -LiteralPath $WorkRoot
     try { $old = New-AgentSession -ConfigFile $config } finally { Pop-Location }

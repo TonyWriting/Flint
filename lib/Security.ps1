@@ -96,6 +96,21 @@ function Test-FlintPathWithinDirectory {
     return $Path.TrimEnd('\') -ieq $Directory.TrimEnd('\') -or $Path.StartsWith($Directory.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
 }
 
+function Assert-FlintNoLinkInPath {
+    param([string]$Path, [string]$Message)
+    # Every existing component, up to the drive root, must be a plain filesystem entry rather than a symlink or junction.
+    $current = $Path
+    while ($current) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+            if ($item.PSProvider.Name -ne 'FileSystem' -or ($item.Attributes -band 1024)) { throw $Message }
+        }
+        $parent = Split-Path $current -Parent
+        if ($parent -eq $current) { break }
+        $current = $parent
+    }
+}
+
 function Resolve-AgentPath {
     param([string]$Root, [string]$Path, [string[]]$ProtectedPaths = @(), [string[]]$ReadDirectories = @())
     if ([string]::IsNullOrWhiteSpace($Root)) { throw 'The working directory is required.' }
@@ -120,16 +135,6 @@ function Resolve-AgentPath {
             }
         }
     }
-    $current = $resolved
-    while ($current) {
-        if (Test-Path -LiteralPath $current) {
-            $entry = Get-Item -LiteralPath $current -Force -ErrorAction Stop
-            if ($entry.Attributes -band 1024) { throw 'Symlinks and junctions are not supported.' }
-            if ($entry.PSProvider.Name -ne 'FileSystem') { throw 'Only filesystem paths are supported.' }
-        }
-        $parent = Split-Path $current -Parent
-        if ($parent -eq $current) { break }
-        $current = $parent
-    }
+    Assert-FlintNoLinkInPath $resolved 'Symlinks and junctions are not supported.'
     return $resolved
 }

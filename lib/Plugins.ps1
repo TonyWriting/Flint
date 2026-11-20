@@ -107,9 +107,7 @@ function Test-FlintPlugin {
         }
     }
     if ($errors.Count -gt 0) {
-        $shown = @($errors | Select-Object -First 20 | ForEach-Object { '  - ' + $_ })
-        if ($errors.Count -gt 20) { $shown += ('  - ... and ' + ($errors.Count - 20) + ' more.') }
-        throw ((@("Plugin at '" + $root + "' is invalid:") + $shown) -join [Environment]::NewLine)
+        throw (Format-FlintErrorList ("Plugin at '" + $root + "' is invalid:") $errors)
     }
     return @{
         name = $name; version = $manifest.version; summary = $manifest.summary; root = $root
@@ -149,6 +147,14 @@ function Read-FlintPlugins {
     return $result
 }
 
+function Format-FlintErrorList {
+    param([string]$Title, [string[]]$Errors)
+    # Long lists stop at 20 entries so the message stays readable.
+    $shown = @($Errors | Select-Object -First 20 | ForEach-Object { '  - ' + $_ })
+    if ($Errors.Count -gt 20) { $shown += ('  - ... and ' + ($Errors.Count - 20) + ' more.') }
+    return ((@($Title) + $shown) -join [Environment]::NewLine)
+}
+
 function Get-FlintPluginRecords {
     param($Plugins)
     $records = @()
@@ -161,28 +167,3 @@ function Get-FlintPluginRecords {
     return $records
 }
 
-function Format-FlintPluginRecord {
-    param($Record)
-    $text = [string]$Record.version
-    $commit = [string]$Record.commit
-    if ($commit.Length -gt 7) { $commit = $commit.Substring(0, 7) }
-    if ($commit) { $text += ' (' + $commit + ')' }
-    return $text
-}
-
-function Get-FlintPluginChanges {
-    param($Saved, $Current)
-    $before = @{}; $after = @{}
-    foreach ($record in @($Saved)) { if ($record -and $record.name) { $before[[string]$record.name] = $record } }
-    foreach ($record in @($Current)) { if ($record -and $record.name) { $after[[string]$record.name] = $record } }
-    $changes = @()
-    foreach ($name in @($after.Keys | Sort-Object)) {
-        if (-not $before.ContainsKey($name)) { $changes += ('added ' + $name + ' ' + (Format-FlintPluginRecord $after[$name])); continue }
-        $old = Format-FlintPluginRecord $before[$name]; $new = Format-FlintPluginRecord $after[$name]
-        if ($old -cne $new) { $changes += ($name + ' ' + $old + ' -> ' + $new) }
-    }
-    foreach ($name in @($before.Keys | Sort-Object)) {
-        if (-not $after.ContainsKey($name)) { $changes += ('removed ' + $name + ' ' + (Format-FlintPluginRecord $before[$name])) }
-    }
-    return $changes
-}

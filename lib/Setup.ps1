@@ -218,11 +218,7 @@ function Test-FlintSetup {
             } catch { $errors += ('Plugins\' + $child.Name + ': ' + $_.Exception.Message) }
         }
     }
-    if ($errors.Count -gt 0) {
-        $shown = @($errors | Select-Object -First 20 | ForEach-Object { '  - ' + $_ })
-        if ($errors.Count -gt 20) { $shown += ('  - ... and ' + ($errors.Count - 20) + ' more.') }
-        throw ((@("Setup at '" + $root + "' is invalid:") + $shown) -join [Environment]::NewLine)
-    }
+    if ($errors.Count -gt 0) { throw (Format-FlintErrorList ("Setup at '" + $root + "' is invalid:") $errors) }
     return @{ root = $root; model = $model; plugins = $plugins }
 }
 
