@@ -84,8 +84,11 @@ try {
     $settingsWrite = @{ type = 'function_call'; call_id = 'call_settings'; name = 'write_file'; arguments = (ConvertTo-Json -InputObject @{ path = 'settings.json'; content = $settings } -Compress) }
     $keyWrite = @{ type = 'function_call'; call_id = 'call_key'; name = 'write_file'; arguments = '{"path":"key.txt","content":"test-api-\u006bey"}' }
     $opaque = @{ type = 'reasoning'; id = 'rs_2'; summary = @(); encrypted_content = 'gAAAA-sk-0123456789abcdefghij_token==' }
-    $script:Responses = @((New-TestResponse @($opaque, $settingsWrite, $keyWrite)), (New-TestResponse @($final)))
-    $null = Invoke-AgentTurn $Session 'Write the settings.' 4
+    # The answer comes from the redacted copy, so a JSON key spelled with escapes is still redacted.
+    $jsonAnswer = @{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = '{"pass\u0077ord":"hidden-answer"}' }) }
+    $script:Responses = @((New-TestResponse @($opaque, $settingsWrite, $keyWrite)), (New-TestResponse @($jsonAnswer)))
+    $settingsAnswer = Invoke-AgentTurn $Session 'Write the settings.' 4
+    Assert-True (-not $settingsAnswer.Contains('hidden-answer')) 'Show the answer from the redacted response.'
     Assert-True ((Get-Content -LiteralPath (Join-Path $WorkRoot 'settings.json') -Raw -Encoding UTF8) -ceq $settings) 'Write credential-like configuration fields exactly as the model wrote them.'
     $keyResult = @($Requests[-1].payload.input | Where-Object { $_.type -eq 'function_call_output' -and $_.call_id -eq 'call_key' })
     Assert-True ((ConvertFrom-Json $keyResult[0].output).status -eq 'error' -and -not (Test-Path -LiteralPath (Join-Path $WorkRoot 'key.txt'))) 'Refuse arguments that carry the API key, even JSON-escaped.'

@@ -32,8 +32,10 @@ function Invoke-AgentTurn {
             $Session.ModelCalls++; $modelCount++
             $response = Invoke-AgentResponse $Session $payload
             Add-FlintUsage $Session $response.usage
-            if ($response.status -ne 'completed') {
-                throw ('Azure OpenAI did not complete the response: ' + (ConvertTo-Json -InputObject @{ status = $response.status; error = $response.error; incomplete_details = $response.incomplete_details } -Depth 16 -Compress))
+            # Tools below run the arguments as the model wrote them. Everything kept, shown or resent uses this redacted copy.
+            $safe = Protect-FlintValue $Session $response
+            if ($safe.status -ne 'completed') {
+                throw ('Azure OpenAI did not complete the response: ' + (ConvertTo-Json -InputObject @{ status = $safe.status; error = $safe.error; incomplete_details = $safe.incomplete_details } -Depth 16 -Compress))
             }
             $nextCalls = @($response.output | Where-Object { $_.type -eq 'function_call' })
             $seen = @{}
@@ -44,11 +46,10 @@ function Invoke-AgentTurn {
                 $seen[$call.call_id] = $true
             }
             $calls = $nextCalls; $completed = @{}
-            # Keep opaque reasoning and every function call for stateless continuation. The kept copy is
-            # redacted like everything else that is logged or resent; the tools below get the arguments as written.
-            $Session.History += @(foreach ($item in @($response.output)) { Protect-FlintValue $Session $item })
+            # Keep opaque reasoning and every function call for stateless continuation.
+            $Session.History += @($safe.output)
             if ($calls.Count -eq 0) {
-                $answer = @($response.output | Where-Object { $_.type -eq 'message' } | ForEach-Object {
+                $answer = @($safe.output | Where-Object { $_.type -eq 'message' } | ForEach-Object {
                     Get-FlintMessageText $_
                 }) -join [Environment]::NewLine
                 if (-not $answer) { throw 'Azure OpenAI returned neither text nor tool calls.' }
