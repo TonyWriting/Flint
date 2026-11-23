@@ -15,7 +15,10 @@ function Resolve-FlintFileTarget {
             (Join-Path $runtimeRoot 'plugins')
         )
     }
-    return Resolve-AgentPath $Root $ToolArguments.path $ProtectedPaths -ReadDirectories $readDirectories
+    $path = Resolve-AgentPath $Root $ToolArguments.path $ProtectedPaths -ReadDirectories $readDirectories
+    # flint.ini holds the API key: no file tool reads, searches or changes it, even inside Flint's own directory.
+    if (Test-FlintPathWithinDirectory $path (Join-Path $runtimeRoot 'flint.ini')) { throw 'This path is protected for the requested operation.' }
+    return $path
 }
 
 function Get-FlintDirectoryPage {

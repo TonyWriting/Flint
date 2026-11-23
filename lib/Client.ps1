@@ -126,9 +126,9 @@ function Invoke-AgentResponse {
             }
             if ((Get-Item -LiteralPath $responsePath).Length -gt 8388608) { throw 'Model response exceeds 8 MiB.' }
             $response = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $responsePath -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
-            $safe = Protect-FlintValue $Session $response
-            Write-FlintEvent $Session 'model_response' @{ model_call = $Session.ModelCalls; attempt = $attempt + 1; duration_ms = Get-FlintElapsedMs $started; response = $safe }
-            return $safe
+            # The trajectory event is redacted. The caller keeps a redacted copy and runs tool calls exactly as the model wrote them.
+            Write-FlintEvent $Session 'model_response' @{ model_call = $Session.ModelCalls; attempt = $attempt + 1; duration_ms = Get-FlintElapsedMs $started; response = $response }
+            return $response
         } catch {
             # A user stop is not a service failure: never log it as a model error or retry it.
             if ($Session.LogFailed -or $Session.StopRequested) { throw }

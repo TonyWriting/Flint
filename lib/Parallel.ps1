@@ -3,7 +3,7 @@ function Get-FlintParallelCall {
     # Eligibility comes from registered operations and reviewed rules, never from model-provided purpose text.
     try {
         $parsed = ConvertTo-FlintToolArguments $Call.name $Call.arguments
-        if ((Protect-FlintText $Session $Call.arguments) -cne $Call.arguments) { return $null }
+        if (Test-FlintUnsafeArguments $Session $Call.arguments) { return $null }
         $plan = @{ arguments = $parsed; invocation = $null; service = ''; event = ''; source = ''; rule_source = '' }
         if ($Call.name -cin @('read_file', 'list_files', 'search_text')) { return $plan }
         if ($Call.name -ceq 'run_command') {

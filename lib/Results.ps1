@@ -36,7 +36,7 @@ function Save-FlintResult {
     }
     if ($format -eq 'json') {
         Assert-FlintResultJsonDepth $decoded
-        $safe = Protect-FlintValue $Session $decoded
+        $safe = Protect-FlintValue $Session $decoded -Untrusted
         $text = ConvertTo-Json -InputObject $safe -Depth 100
         if ($safe -is [array]) { $itemCount = $safe.Count }
         elseif ($safe.value -is [array]) { $itemCount = $safe.value.Count }

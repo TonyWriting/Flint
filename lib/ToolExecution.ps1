@@ -19,8 +19,8 @@ function Invoke-AgentTool {
     Write-FlintEvent $Session 'tool_started' @{ call_id = $CallId; name = $Name; arguments = $Arguments }
     try {
         $parsed = ConvertTo-FlintToolArguments $Name $Arguments
-        if ((Protect-FlintText $Session $Arguments) -cne $Arguments) {
-            throw 'Tool arguments contain credential patterns or terminal control characters. Remove them before continuing.'
+        if (Test-FlintUnsafeArguments $Session $Arguments) {
+            throw 'Tool arguments contain one of Flint''s own credentials or terminal control characters. No action was taken.'
         }
         if ($Name -ceq 'run_command') {
             $invocation = New-FlintCommandInvocation $Session $parsed

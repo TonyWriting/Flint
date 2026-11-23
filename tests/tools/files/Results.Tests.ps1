@@ -39,6 +39,8 @@ try {
     $plain = Save-FlintResult $Session 'Upstream failure. password=private-error-value'
     Assert-True ($plain.format -eq 'text' -and $plain.result_path.EndsWith('.txt')) 'Save non-JSON error bodies as text.'
     Assert-True (-not (Get-Content -LiteralPath $plain.result_path -Raw).Contains('private-error-value')) 'Redact credentials in non-JSON bodies.'
+    $claimed = Save-FlintResult $Session '{"type":"reasoning","encrypted_content":"password=private-claimed-value"}'
+    Assert-True (-not (Get-Content -LiteralPath $claimed.result_path -Raw).Contains('private-claimed-value')) 'Redact service responses that declare themselves reasoning.'
     $empty = Save-FlintResult $Session ''
     Assert-True ($empty.content_chars -eq 0 -and (Test-Path -LiteralPath $empty.result_path)) 'Save an empty HTTP response without fabricating content.'
     $deep = ('{"child":' * 102) + 'null' + ('}' * 102)
