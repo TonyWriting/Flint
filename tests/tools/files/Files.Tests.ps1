@@ -63,6 +63,9 @@ try {
     $safe = Protect-FlintText $Session 'api_key="hidden-one" password=hidden-two Authorization: Bearer hidden-three https://host/?sig=hidden-four&x=1 test-api-key'
     foreach ($secret in @('hidden-one', 'hidden-two', 'hidden-three', 'hidden-four', 'test-api-key')) { Assert-True (-not $safe.Contains($secret)) "Redact $secret."
     }
+    # Tool arguments are refused only for Flint's own credentials, raw or JSON-escaped, never for credential-like field names.
+    foreach ($arguments in @('{"content":"test-api-key"}', '{"content":"test-api-\u006bey"}')) { Assert-True (Test-FlintUnsafeArguments $Session $arguments) ('Refuse arguments carrying the API key: ' + $arguments) }
+    foreach ($arguments in @('{"content":"password: hunter2\ntoken: \"\""}', '{"content":"{\"secret\":{\"secretName\":\"tls\"}}"}')) { Assert-True (-not (Test-FlintUnsafeArguments $Session $arguments)) ('Run configuration with credential-like names as written: ' + $arguments) }
     $cursorText = Protect-FlintText $Session '?$skiptoken=page2&token=hidden-token&access_token=hidden-access'
     Assert-True ($cursorText.Contains('$skiptoken=page2') -and -not $cursorText.Contains('hidden-token') -and -not $cursorText.Contains('hidden-access')) 'Preserve pagination cursors while redacting authentication tokens.'
     $json = ConvertTo-Json -InputObject (Protect-FlintValue $Session @{ items = @(@{ password = 'hidden-five'; text = 'safe' }); token = 'hidden-six' }) -Depth 16

@@ -44,8 +44,9 @@ function Invoke-AgentTurn {
                 $seen[$call.call_id] = $true
             }
             $calls = $nextCalls; $completed = @{}
-            # Keep opaque reasoning and every function call for stateless continuation.
-            $Session.History += @($response.output)
+            # Keep opaque reasoning and every function call for stateless continuation. The kept copy is
+            # redacted like everything else that is logged or resent; the tools below get the arguments as written.
+            $Session.History += @(foreach ($item in @($response.output)) { Protect-FlintValue $Session $item })
             if ($calls.Count -eq 0) {
                 $answer = @($response.output | Where-Object { $_.type -eq 'message' } | ForEach-Object {
                     Get-FlintMessageText $_

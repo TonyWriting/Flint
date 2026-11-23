@@ -78,6 +78,22 @@ try {
     Invoke-AgentTurn $Session 'Continue.' 2 | Out-Null
     Assert-True ($Requests[-1].payload.input.Count -eq ($previousCount + 1)) 'Retain context across user turns.'
 
+    # Tools run the arguments as the model wrote them; the copies kept, logged and resent are redacted.
+    Reset-TestConversation
+    $settings = "{`n  `"password`": `"hidden-value`",`n  `"volumes`": [ { `"secret`": { `"secretName`": `"tls-cert`" } } ]`n}"
+    $settingsWrite = @{ type = 'function_call'; call_id = 'call_settings'; name = 'write_file'; arguments = (ConvertTo-Json -InputObject @{ path = 'settings.json'; content = $settings } -Compress) }
+    $keyWrite = @{ type = 'function_call'; call_id = 'call_key'; name = 'write_file'; arguments = '{"path":"key.txt","content":"test-api-\u006bey"}' }
+    $opaque = @{ type = 'reasoning'; id = 'rs_2'; summary = @(); encrypted_content = 'gAAAA-sk-0123456789abcdefghij_token==' }
+    $script:Responses = @((New-TestResponse @($opaque, $settingsWrite, $keyWrite)), (New-TestResponse @($final)))
+    $null = Invoke-AgentTurn $Session 'Write the settings.' 4
+    Assert-True ((Get-Content -LiteralPath (Join-Path $WorkRoot 'settings.json') -Raw -Encoding UTF8) -ceq $settings) 'Write credential-like configuration fields exactly as the model wrote them.'
+    $keyResult = @($Requests[-1].payload.input | Where-Object { $_.type -eq 'function_call_output' -and $_.call_id -eq 'call_key' })
+    Assert-True ((ConvertFrom-Json $keyResult[0].output).status -eq 'error' -and -not (Test-Path -LiteralPath (Join-Path $WorkRoot 'key.txt'))) 'Refuse arguments that carry the API key, even JSON-escaped.'
+    $sentCall = @($Requests[-1].payload.input | Where-Object { $_.type -eq 'function_call' -and $_.call_id -eq 'call_settings' })
+    Assert-True (-not $sentCall[0].arguments.Contains('hidden-value')) 'Resend the redacted copy of the call.'
+    $sentReasoning = @($Requests[-1].payload.input | Where-Object { $_.type -eq 'reasoning' })
+    Assert-True ($sentReasoning[0].encrypted_content -ceq $opaque.encrypted_content) 'Return encrypted reasoning unchanged even when it resembles a token.'
+
     Reset-TestConversation
     $script:Responses = @((New-TestResponse @(
         @{ type = 'message'; role = 'assistant'; content = @() },
