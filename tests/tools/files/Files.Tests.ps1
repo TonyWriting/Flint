@@ -70,6 +70,10 @@ try {
     Assert-True ($cursorText.Contains('$skiptoken=page2') -and -not $cursorText.Contains('hidden-token') -and -not $cursorText.Contains('hidden-access')) 'Preserve pagination cursors while redacting authentication tokens.'
     $json = ConvertTo-Json -InputObject (Protect-FlintValue $Session @{ items = @(@{ password = 'hidden-five'; text = 'safe' }); token = 'hidden-six' }) -Depth 16
     Assert-True (-not $json.Contains('hidden-five') -and -not $json.Contains('hidden-six')) 'Recursively redact nested credentials without corrupting JSON.'
+    # A key with characters that JSON escapes is still found in the decoded text the tool would receive.
+    $savedKey = $Session.ApiKey; $Session.ApiKey = 'key\seg"ment<1>'
+    try { Assert-True (Test-FlintUnsafeArguments $Session (ConvertTo-Json -InputObject @{ content = 'x key\seg"ment<1> y' } -Compress)) 'Refuse a key that JSON escapes.' }
+    finally { $Session.ApiKey = $savedKey }
     # Only Flint's own conversation items keep opaque reasoning; tool data that claims to be reasoning is redacted.
     $claimed = Protect-FlintValue $Session (ConvertTo-Json -InputObject @{ status = 'ok'; output = '{"type":"reasoning","encrypted_content":"password=hidden-nine"}' } -Compress)
     $issued = Protect-FlintValue $Session @{ type = 'reasoning'; encrypted_content = 'password=opaque-ten' }

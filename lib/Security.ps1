@@ -5,30 +5,28 @@ function Get-FlintSessionSecrets {
     return @(@($Session.ApiKey, $Session.Azure.AccessToken, $Session.Azure.KeyVault.AccessToken) | Where-Object { $_ })
 }
 
-function Test-FlintControlText {
+function Get-FlintJsonStrings {
     param($Value)
-    # Tabs and line breaks are ordinary text; other control characters could drive the terminal.
-    if ($Value -is [string]) { return $Value -match '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]' }
-    $children = @()
-    if ($Value -is [array]) { $children = @($Value) }
-    elseif ($Value -is [pscustomobject]) { foreach ($property in $Value.PSObject.Properties) { $children += $property.Name; $children += $property.Value } }
-    foreach ($child in $children) { if (Test-FlintControlText $child) { return $true } }
-    return $false
+    # Every string value and property name of decoded JSON: the text a tool actually receives.
+    if ($Value -is [string]) { $Value }
+    elseif ($Value -is [array]) { foreach ($item in $Value) { Get-FlintJsonStrings $item } }
+    elseif ($Value -is [pscustomobject]) { foreach ($property in $Value.PSObject.Properties) { $property.Name; Get-FlintJsonStrings $property.Value } }
 }
 
 function Test-FlintUnsafeArguments {
     param([hashtable]$Session, [AllowEmptyString()][string]$Arguments)
     # Tools run the arguments exactly as the model wrote them. Field names that look like credentials are
-    # often configuration, so only Flint's own credentials and control characters are refused, raw or JSON-escaped.
-    $texts = @($Arguments); $decoded = $null
-    try {
-        $decoded = ConvertFrom-Json -InputObject $Arguments -ErrorAction Stop
-        $texts += ConvertTo-Json -InputObject $decoded -Depth 64 -Compress
-    } catch { }
-    foreach ($secret in @(Get-FlintSessionSecrets $Session)) {
-        foreach ($text in $texts) { if ($text.Contains($secret)) { return $true } }
+    # often configuration, so only Flint's own credentials and control characters are refused, in the raw
+    # arguments and in every decoded string, where JSON escapes no longer hide them.
+    $texts = @($Arguments)
+    try { $texts += @(Get-FlintJsonStrings (ConvertFrom-Json -InputObject $Arguments -ErrorAction Stop)) } catch { }
+    $secrets = @(Get-FlintSessionSecrets $Session)
+    foreach ($text in $texts) {
+        # Tabs and line breaks are ordinary text; other control characters could drive the terminal.
+        if ($text -match '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]') { return $true }
+        foreach ($secret in $secrets) { if ($text.Contains($secret)) { return $true } }
     }
-    return ($Arguments -match '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]') -or (Test-FlintControlText $decoded)
+    return $false
 }
 
 function Protect-FlintText {
