@@ -55,6 +55,20 @@ try {
     $Session.Ui.Live = $false
     Assert-True ((Read-FlintPrompt $Session) -ceq '') 'Return blank redirected input to the caller.'
 
+    # Read-Host returns one line at a time; the rest of a paste is already waiting in the console.
+    function Test-FlintPendingInput { return $script:Inputs.Count -gt 0 }
+    $Session.Ui.Live = $true
+    $script:Inputs = @('Error from pod api:', 'status CrashLoopBackOff', '', 'what is wrong?', '')
+    Assert-True ((Read-FlintPrompt $Session) -ceq "Error from pod api:`nstatus CrashLoopBackOff`n`nwhat is wrong?") 'Send a multi-line paste as one message, keeping inner blank lines.'
+    function Test-FlintPendingInput { return $false }
+    $script:Inputs = @('Typed question', 'Next question')
+    Assert-True ((Read-FlintPrompt $Session) -ceq 'Typed question' -and $script:Inputs.Count -eq 1) 'Send a typed line on Enter without waiting for more input.'
+    function Test-FlintPendingInput { return $true }
+    $script:Inputs = @('First command', 'Second command')
+    $Session.Ui.Live = $false
+    Assert-True ((Read-FlintPrompt $Session) -ceq 'First command' -and $script:Inputs.Count -eq 1) 'Keep one message per line for redirected input.'
+    function Test-FlintPendingInput { return $false }
+
     $Session.Ui.Live = $true; $Session.Ui.Ansi = $false
     Start-FlintTurnUi $Session
     $Session.Ui.Started = [datetime]::UtcNow.AddSeconds(-18.1)
