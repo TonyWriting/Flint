@@ -136,13 +136,13 @@ function Read-FlintPrompt {
         # Read-Host returns one line at a time, and the rest of a multi-line paste is already waiting in the
         # console. Read it into the same message; otherwise the first stop-key check would discard it.
         if ($null -ne $promptText -and $Session.Ui.Live) {
-            $lines = @($promptText)
-            while (Test-FlintPendingInput) {
+            # Collect the loop output once; appending to an array copies it for every line.
+            $more = @(while (Test-FlintPendingInput) {
                 $line = Read-Host
                 if ($null -eq $line) { break }
-                $lines += $line
-            }
-            $promptText = ($lines -join "`n").TrimEnd("`n")
+                $line
+            })
+            $promptText = ((@($promptText) + $more) -join "`n").TrimEnd("`n")
         }
         $readCompleted = $true
         return $promptText
