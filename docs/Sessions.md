@@ -44,7 +44,7 @@ Flint 把会话记录为**轨迹**，默认保存在工作目录的 `.flint/traj
 | | `worker.call_ms` | 其中 kubectl 进程或 Azure HTTP 请求本身 |
 | | `read_ms` | 读取子进程返回的结果 |
 
-`process_ms` 减去子进程自己报告的各项，就是启动进程、退出和等待检测的开销。没有交互终端时，模型请求在主进程中完成，`serialize_ms` 和 `http_ms` 直接位于 `timing` 下。
+启动进程、退出和等待检测的开销，对工具调用是 `process_ms - worker.load_ms - worker.run_ms`，`worker.call_ms` 已包含在 `worker.run_ms` 中；对模型调用是 `process_ms - worker.load_ms - worker.request_ms - worker.serialize_ms - worker.http_ms`。没有交互终端时，模型请求在主进程中完成，`serialize_ms` 和 `http_ms` 直接位于 `timing` 下。
 
 ## 命令行参数
 
