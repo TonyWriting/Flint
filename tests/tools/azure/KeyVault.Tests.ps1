@@ -24,6 +24,7 @@ function Invoke-WebRequest {
     $parsed = $Uri -as [uri]
     if ($parsed.AbsolutePath -cne '/secrets') { throw 'A secret value endpoint was requested.' }
     $vault = ($parsed.Host -split '\.')[0]
+    if ($vault -eq 'offline-vault') { Start-Sleep -Milliseconds 20; throw 'Fixture connection failure.' }
     if ($vault -in @('forbidden-vault', 'expired-vault', 'transient-vault')) {
         $status = 403
         if ($vault -eq 'expired-vault') { $status = 401 }
@@ -92,6 +93,11 @@ function Invoke-WebRequest {
     }
     $forbidden = Invoke-TestTool keyvault_list_secrets @{ vault_name = 'forbidden-vault'; next_link = '' }
     Assert-True ($forbidden.http_status -eq 403 -and -not $forbidden.result_id -and $Session.Azure.Status -eq 'ready') 'Report permissions separately without saving error body content.'
+    $finished = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'tool_finished' })
+    Assert-True ($finished[-1].timing.worker.call_ms -gt 0) 'Keep the HTTP wait of a failed Key Vault request.'
+    $offline = Invoke-TestTool keyvault_list_secrets @{ vault_name = 'offline-vault'; next_link = '' }
+    $finished = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'tool_finished' })
+    Assert-True ($offline.status -eq 'error' -and $null -eq $offline.http_status -and $finished[-1].timing.worker.call_ms -ge 20) 'Keep the HTTP wait of a request that never received a response.'
     $count = @(Get-Content -LiteralPath $trace).Count
     $retry = Invoke-TestTool keyvault_list_secrets @{ vault_name = 'transient-vault'; next_link = '' }
     Assert-True ($retry.status -eq 'ok' -and @(Get-Content -LiteralPath $trace).Count -eq $count + 2) 'Retry a transient metadata-list failure through the existing read-only retry pipeline.'

@@ -156,6 +156,7 @@ function Invoke-FlintAzureHttpResponse {
     }
     if ($Body) { $parameters.Body = $Body; $parameters.ContentType = 'application/json; charset=utf-8' }
     $statusCode = $null; $content = ''; $headers = $null; $failure = $null
+    $requestStarted = [datetime]::UtcNow
     try {
         $response = Invoke-WebRequest @parameters
         $statusCode = [int]$response.StatusCode
@@ -166,7 +167,7 @@ function Invoke-FlintAzureHttpResponse {
         if ($_.Exception.Response) { $statusCode = [int]$_.Exception.Response.StatusCode; $headers = $_.Exception.Response.Headers }
         if ($null -eq $statusCode) {
             $retryable = $readOnly -and [string]$_.Exception.Status -in @('ConnectFailure', 'ConnectionClosed', 'SendFailure', 'ReceiveFailure')
-            return @{ status = 'error'; exit_code = $null; output = Protect-FlintText $Session $_.Exception.Message; retryable = $retryable; has_body = $false; failure = $failure }
+            return @{ status = 'error'; exit_code = $null; output = Protect-FlintText $Session $_.Exception.Message; retryable = $retryable; has_body = $false; failure = $failure; duration_ms = Get-FlintElapsedMs $requestStarted }
         }
         # PowerShell 5.1 exposes HTTP error bodies through ErrorDetails without invoking .NET stream methods.
         if ($_.ErrorDetails.Message) { $content = [string]$_.ErrorDetails.Message }
@@ -177,7 +178,7 @@ function Invoke-FlintAzureHttpResponse {
             $result.status = $status; $result.http_status = $statusCode; $result.exit_code = $null
             $result.output = 'HTTP error returned without a readable response body.'
             $result.retryable = $readOnly -and $statusCode -in @(429, 502, 503, 504)
-            $result.has_body = $false; $result.failure = $failure
+            $result.has_body = $false; $result.failure = $failure; $result.duration_ms = Get-FlintElapsedMs $requestStarted
             return $result
         }
     }
@@ -189,6 +190,7 @@ function Invoke-FlintAzureHttpResponse {
     $result.content = $content; $result.has_body = $true
     $result.retryable = $readOnly -and $statusCode -in @(429, 502, 503, 504)
     if ($failure) { $result.failure = $failure }
+    $result.duration_ms = Get-FlintElapsedMs $requestStarted
     return $result
 }
 

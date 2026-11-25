@@ -48,6 +48,11 @@ class Recorder {
     $savedKey = $env:FLINT_MODEL_API_KEY; $env:FLINT_MODEL_API_KEY = 'must-not-reach-command'
     try { $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('version', '--client') } } finally { $env:FLINT_MODEL_API_KEY = $savedKey }
     Assert-True ($result.status -eq 'ok' -and $result.output -ceq '["version","--client"]') ('Execute validated arguments in a constrained worker without inherited credentials. ' + $result.output)
+    $finished = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'tool_finished' })[-1]
+    $timing = $finished.timing
+    Assert-True ($timing.total_ms -ge $timing.process_ms -and $timing.process_ms -ge $timing.worker.run_ms -and $timing.worker.load_ms -gt 0 -and
+        $timing.worker.run_ms -ge $timing.worker.call_ms -and $timing.worker.call_ms -gt 0 -and $null -ne $timing.read_ms) 'Record where a command call spends its time.'
+    Assert-True ($null -eq $result.timing -and $null -eq $finished.data.result.timing -and $result.duration_ms -eq $timing.total_ms) 'Keep timings in the trajectory, out of the result the model reads.'
     $unicode = ConvertFrom-Json '"\u4f60\u597d"'
     $tokens = @('echo', '', 'a b', 'a"b', 'C:\path with spaces\', 'x\\"y', 'a&b|c>file', '%PATH%', '!value!', '$(whoami)', $unicode)
     $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = $tokens }
@@ -59,7 +64,7 @@ class Recorder {
     Assert-True ($result.status -eq 'error' -and $result.exit_code -eq 7 -and $result.output.Contains('partial') -and $result.output.Contains('failure')) 'Keep native exit codes and both output streams.'
     Assert-True ((Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('empty') }).output -ceq '') 'Allow empty successful command output.'
     $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'deployments', '--context', 'cc-test', '--namespace', 'team', '--output', 'json') }
-    Assert-True ($result.status -eq 'ok' -and $result.preview_truncated -and $result.output.Length -le 2048 -and -not $result.capture_incomplete) 'Save command output beyond the worker result limit before returning a bounded preview.'
+    Assert-True ($result.status -eq 'ok' -and $result.preview_truncated -and $result.output.Length -le 16384 -and -not $result.capture_incomplete) 'Save command output beyond the worker result limit before returning a bounded preview.'
     $saved = Get-Content -LiteralPath $result.result_path -Raw -Encoding UTF8
     $data = ConvertFrom-Json -InputObject $saved
     Assert-True ($data.items.Count -eq 2 -and $data.items[0].padding.Length -eq 600000 -and $data.items[1].name -ceq 'last-record') 'Preserve the complete Kubernetes JSON without mixing stderr into it.'

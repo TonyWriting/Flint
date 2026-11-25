@@ -41,18 +41,24 @@ function Remove-FlintWorkerRequest {
 
 function Read-FlintWorkerResult {
     param([hashtable]$Worker, $Native)
+    # process_ms runs from starting the worker to collecting its output; the worker reports its own parts.
+    $timing = [ordered]@{ process_ms = $Native.duration_ms; worker = ConvertFrom-FlintTiming $Native.stdout }
     if ($Native.status -eq 'stopped') {
-        return @{ status = 'stopped'; exit_code = $null; output = 'Stopped by the user before the tool finished. No result is available.'; retryable = $false; duration_ms = $Native.duration_ms }
+        return @{ status = 'stopped'; exit_code = $null; output = 'Stopped by the user before the tool finished. No result is available.'; retryable = $false; duration_ms = $Native.duration_ms; timing = $timing }
     }
     if ($Native.status -ne 'ok') {
         $detail = 'Tool worker stopped: ' + $Native.status + '. ' + $Native.stderr
         if ($Worker.name -in @('write_file', 'edit_file', 'create_directory', 'run_command', 'azure_request')) { $detail += ' The action outcome may be unknown. Query the actual state before proposing another write.' }
-        return @{ status = $Native.status; exit_code = $Native.exit_code; output = $detail; retryable = $false; duration_ms = $Native.duration_ms }
+        return @{ status = $Native.status; exit_code = $Native.exit_code; output = $detail; retryable = $false; duration_ms = $Native.duration_ms; timing = $timing }
     }
     if (-not (Test-Path -LiteralPath $Worker.result_path)) { throw 'Tool worker did not return a result.' }
     if ((Get-Item -LiteralPath $Worker.result_path).Length -gt 524288) { throw 'Tool result exceeded its size limit.' }
+    $readStarted = [datetime]::UtcNow
     $result = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $Worker.result_path -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
+    $timing.read_ms = Get-FlintElapsedMs $readStarted
     $result | Add-Member -NotePropertyName duration_ms -NotePropertyValue $Native.duration_ms -Force
+    # Complete-FlintToolResult moves timing to the trajectory before the model sees the result.
+    $result | Add-Member -NotePropertyName timing -NotePropertyValue $timing -Force
     return $result
 }
 

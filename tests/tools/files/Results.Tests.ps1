@@ -7,7 +7,7 @@ try {
         nextLink = $nextLink
     }) -Depth 8 -Compress
     $saved = Save-FlintResult $Session $body
-    Assert-True ($saved.format -eq 'json' -and $saved.preview_truncated -and $saved.output.Length -le 2048) 'Return only a bounded preview for a large response.'
+    Assert-True ($saved.format -eq 'json' -and $saved.preview_truncated -and $saved.output.Length -eq 16384) 'Return only a bounded preview for a large response.'
     Assert-True ($saved.item_count -eq 2 -and $saved.next_link -ceq $nextLink) 'Expose service pagination independently of the preview.'
     Assert-True ($saved.size_bytes -gt 262144 -and $saved.content_chars -gt 300000) 'Persist a response larger than the normal file read threshold.'
     $content = Get-Content -LiteralPath $saved.result_path -Raw -Encoding UTF8
@@ -15,6 +15,9 @@ try {
     Assert-True ($decoded.value.Count -eq 2 -and $decoded.value[0].details.Length -eq 300000 -and $decoded.value[1].name -ceq 'last-record-marker') 'Preserve the complete JSON response past the preview boundary.'
     Assert-True (-not $content.Contains('private-result-value') -and $decoded.value[1].password -ceq '[redacted]') 'Redact before any response reaches disk.'
     Assert-True (-not $saved.output.Contains('last-record-marker')) 'Keep the end of a large response out of the initial context.'
+    $medium = Save-FlintResult $Session (ConvertTo-Json -InputObject @{ value = @(@{ name = 'medium'; details = ('y' * 10000) }, @{ name = 'medium-tail-marker' }) } -Depth 8 -Compress)
+    Assert-True (-not $medium.preview_truncated -and $medium.output.Contains('medium-tail-marker') -and $medium.output.Length -eq $medium.content_chars) 'Return a medium response whole, without a follow-up read.'
+    Assert-True ((Get-Content -LiteralPath $medium.result_path -Raw -Encoding UTF8).Contains('medium-tail-marker')) 'Still save a whole response so it can be read again after the context is trimmed.'
 
     $page = Invoke-TestTool read_file @{ path = $saved.result_path; max_lines = 200 }
     Assert-True ($page.status -eq 'ok' -and $page.truncated -and $page.line_endings_normalized) 'Read saved results through the real constrained worker.'

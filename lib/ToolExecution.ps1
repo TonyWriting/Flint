@@ -1,9 +1,17 @@
 function Complete-FlintToolResult {
     param([hashtable]$Session, [string]$Name, $Parsed, [string]$CallId, [datetime]$Started, $Result)
     if (-not $Result) { $Result = @{ status = 'cancelled'; exit_code = $null; output = 'Tool interrupted; verify actual state before repeating any write.'; retryable = $false } }
-    $result = Protect-FlintValue $Session $Result
-    $result.duration_ms = Get-FlintElapsedMs $Started
-    Write-FlintEvent $Session 'tool_finished' @{ call_id = $CallId; name = $Name; result = $result } -BestEffort
+    # Timing goes to the trajectory record; the model sees only the total duration.
+    $timing = [ordered]@{ total_ms = Get-FlintElapsedMs $Started }
+    if ($Result.timing -is [System.Collections.IDictionary]) { foreach ($part in @($Result.timing.Keys)) { $timing[$part] = $Result.timing[$part] } }
+    # Variable names are case-insensitive: these loops must not reuse $Name.
+    if ($Result -is [System.Collections.IDictionary]) { $keys = @($Result.Keys) }
+    else { $keys = @($Result.PSObject.Properties | ForEach-Object { $_.Name }) }
+    $fields = [ordered]@{}
+    foreach ($key in $keys) { if ($key -cne 'timing') { $fields[$key] = $Result.$key } }
+    $result = Protect-FlintValue $Session $fields
+    $result.duration_ms = $timing.total_ms
+    Write-FlintEvent $Session 'tool_finished' @{ call_id = $CallId; name = $Name; result = $result } -Timing $timing -BestEffort
     if ($result.output.Length -gt 32768) { $result.output = $result.output.Substring(0, 32768) + "`n[truncated at 32768 characters]"; $result.truncated = $true }
     Show-FlintToolResult $Session $Name $Parsed $result
     return $result

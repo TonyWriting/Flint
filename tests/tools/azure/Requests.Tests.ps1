@@ -194,7 +194,7 @@ try {
     $Session.Azure.Status = 'ready'; $script:TokenFailure = ''; $script:HttpStatus = 200
     $script:ResponseBody = '{"data":"' + ('x' * 40000) + '","tail":"saved-body-tail-marker"}'
     $result = Invoke-TestTool azure_request $read
-    Assert-True ($result.result_id -and $result.preview_truncated -and $result.output.Length -le 2048) 'Return a result reference instead of a large response body.'
+    Assert-True ($result.result_id -and $result.preview_truncated -and $result.output.Length -le 16384) 'Return a result reference instead of a large response body.'
     Assert-True ((Get-Content -LiteralPath $result.result_path -Raw).Contains('saved-body-tail-marker')) 'Keep the complete response outside the model context.'
     $Session.History += @{ type = 'function_call_output'; call_id = 'saved-result'; output = (ConvertTo-Json $result -Depth 16 -Compress) }
     $payload = ConvertTo-Json (New-FlintPayload $Session) -Depth 32 -Compress

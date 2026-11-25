@@ -53,11 +53,15 @@ function Invoke-FlintHttpRequest {
     param([hashtable]$Session, $Payload, [string]$ResponsePath, [int]$TimeoutSec = 0)
     if ($TimeoutSec -le 0) { $TimeoutSec = $Session.RequestTimeoutSec }
     $headers = @{ Authorization = 'Bearer ' + $Session.ApiKey; Accept = 'application/json' }
+    $serializeStarted = [datetime]::UtcNow
     $json = ConvertTo-Json -InputObject $Payload -Depth 64 -Compress
+    $sendStarted = [datetime]::UtcNow
     # Decode the raw response as UTF-8 even when the service omits a charset.
     Invoke-RestMethod -Method Post -Uri $Session.ApiEndpoint `
         -Headers $headers -ContentType 'application/json; charset=utf-8' -Body $json `
         -TimeoutSec $TimeoutSec -MaximumRedirection 0 -OutFile $ResponsePath -ErrorAction Stop
+    # The response is in ResponsePath; only timings are returned.
+    return [ordered]@{ serialize_ms = [long](($sendStarted - $serializeStarted).TotalMilliseconds); http_ms = Get-FlintElapsedMs $sendStarted }
 }
 
 function Get-FlintHttpFailure {
@@ -91,6 +95,8 @@ function Invoke-AgentResponse {
             history_count = @($Payload.input).Count; omitted_outputs = $Session.OmittedOutputs.Count; request_chars = $Session.RequestChars
         }
         try {
+            $attemptStarted = [datetime]::UtcNow
+            $timing = [ordered]@{}
             Show-FlintActivity $Session 'Thinking'
             New-Item -ItemType File -Path $responsePath -ErrorAction Stop | Out-Null
             $remaining = ($deadline - [datetime]::UtcNow).TotalSeconds
@@ -110,8 +116,12 @@ function Invoke-AgentResponse {
                 $arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', ('"' + $Session.ModelWorkerPath + '"'), '-RequestPath', ('"' + $requestPath + '"'))
                 $remaining = ($deadline - [datetime]::UtcNow).TotalSeconds
                 if ($remaining -le 0) { throw ('Model request timed out after ' + $Session.RequestTimeoutSec + ' seconds.') }
+                $timing.prepare_ms = Get-FlintElapsedMs $attemptStarted
                 $native = Invoke-FlintProcess -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
                     -ArgumentList $arguments -TimeoutSec $remaining -WorkingDirectory $Session.Root -Session $Session -ModelApiKey $Session.ApiKey
+                # process_ms runs from starting the worker to collecting its output; the worker reports its own parts.
+                $timing.process_ms = $native.duration_ms
+                $timing.worker = ConvertFrom-FlintTiming $native.stdout
                 if ($native.status -eq 'stopped') { throw 'Stopped by the user.' }
                 if ($native.status -eq 'timeout') { throw ('Model request timed out after ' + $Session.RequestTimeoutSec + ' seconds.') }
                 if (Test-Path -LiteralPath $errorPath) {
@@ -122,12 +132,17 @@ function Invoke-AgentResponse {
                 if ($native.status -ne 'ok') { throw ('Model worker stopped: ' + $native.status + '. ' + $native.stderr) }
             } else {
                 # Plain and redirected hosts do not need an animation process.
-                Invoke-FlintHttpRequest $Session $Payload $responsePath -TimeoutSec $timeout
+                $timing.prepare_ms = Get-FlintElapsedMs $attemptStarted
+                $sent = Invoke-FlintHttpRequest $Session $Payload $responsePath -TimeoutSec $timeout
+                if ($sent -is [System.Collections.IDictionary]) { foreach ($part in @($sent.Keys)) { $timing[$part] = $sent[$part] } }
             }
+            $readStarted = [datetime]::UtcNow
             if ((Get-Item -LiteralPath $responsePath).Length -gt 8388608) { throw 'Model response exceeds 8 MiB.' }
             $response = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $responsePath -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
+            $timing.read_ms = Get-FlintElapsedMs $readStarted
+            $timing.attempt_ms = Get-FlintElapsedMs $attemptStarted
             # The trajectory event is redacted. The caller keeps a redacted copy and runs tool calls exactly as the model wrote them.
-            Write-FlintEvent $Session 'model_response' @{ model_call = $Session.ModelCalls; attempt = $attempt + 1; duration_ms = Get-FlintElapsedMs $started; response = $response }
+            Write-FlintEvent $Session 'model_response' @{ model_call = $Session.ModelCalls; attempt = $attempt + 1; duration_ms = Get-FlintElapsedMs $started; response = $response } -Timing $timing
             return $response
         } catch {
             # A user stop is not a service failure: never log it as a model error or retry it.
