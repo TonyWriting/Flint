@@ -106,6 +106,16 @@ function Show-FlintActivity {
     elseif ($Session.Ui.Stage -cne $safe) { Write-Host ('  ' + $safe + '...') -ForegroundColor DarkGray; $Session.Ui.Stage = $safe }
 }
 
+function Test-FlintPendingInput {
+    # A paste reaches the console as one burst, which a terminal may deliver in chunks; a short grace
+    # period bridges the gaps. A person cannot type the next line this quickly after pressing Enter.
+    for ($wait = 0; $wait -lt 5; $wait++) {
+        try { if ([Console]::KeyAvailable) { return $true } } catch { return $false }
+        Start-Sleep -Milliseconds 10
+    }
+    return $false
+}
+
 function Read-FlintPrompt {
     param([hashtable]$Session)
     Initialize-FlintUi $Session
@@ -122,6 +132,17 @@ function Read-FlintPrompt {
             # ConstrainedLanguage cannot set RawUI.CursorPosition; otherwise skip only the spacer line.
             if ($Session.Ui.Ansi) { Write-Host ([string][char]27 + '[1A' + [char]27 + '[2K' + "`r") -NoNewline }
             Write-FlintColoredText '> ' $Session -Color Green -NoNewline -KeepColor
+        }
+        # Read-Host returns one line at a time, and the rest of a multi-line paste is already waiting in the
+        # console. Read it into the same message; otherwise the first stop-key check would discard it.
+        if ($null -ne $promptText -and $Session.Ui.Live) {
+            # Collect the loop output once; appending to an array copies it for every line.
+            $more = @(while (Test-FlintPendingInput) {
+                $line = Read-Host
+                if ($null -eq $line) { break }
+                $line
+            })
+            $promptText = ((@($promptText) + $more) -join "`n").TrimEnd("`n")
         }
         $readCompleted = $true
         return $promptText

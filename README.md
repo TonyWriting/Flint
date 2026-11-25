@@ -58,6 +58,7 @@ powershell.exe -NoProfile -File .\agent.ps1 -NoAzure
 - `/help`：列出命令。
 - `/status`：查看模型、Azure 登录、上下文用量、插件和轨迹位置。
 - `/continue`（简写 `/c`）：继续被中止的任务。
+- 粘贴多行文本（如报错或日志）时，整段作为一条消息发送；最后一行没有换行时，按 Enter 发送。
 - `/exit`：退出。
 - `s`：Flint 工作时按下，停止当前任务，保留对话。
 - `Ctrl+C`：停止并退出，保存会话并显示继续用的 `-Resume` 命令。
