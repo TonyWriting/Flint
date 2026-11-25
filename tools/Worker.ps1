@@ -1,6 +1,7 @@
 #Requires -Version 5.1
 param([Parameter(Mandatory = $true)][string]$RequestPath)
 $ErrorActionPreference = 'Stop'
+$scriptStarted = [datetime]::UtcNow
 $azureAccessToken = $env:FLINT_AZURE_ACCESS_TOKEN
 Remove-Item -LiteralPath Env:FLINT_AZURE_ACCESS_TOKEN -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath Env:FLINT_MODEL_API_KEY -ErrorAction SilentlyContinue
@@ -14,6 +15,8 @@ foreach ($file in @('Security', 'Telemetry', 'Runtime', 'Results')) {
 . (Join-Path $PSScriptRoot 'azure\Http.ps1')
 . (Join-Path $PSScriptRoot 'azure\KeyVault.ps1')
 . (Join-Path $PSScriptRoot 'Commands.ps1')
+$loadMs = Get-FlintElapsedMs $scriptStarted
+$runStarted = [datetime]::UtcNow
 $request = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
 try {
     $parsed = ConvertTo-FlintToolArguments $request.name (ConvertTo-Json -InputObject $request.arguments -Depth 16 -Compress)
@@ -28,5 +31,11 @@ try {
 } catch {
     $result = @{ status = 'error'; exit_code = $null; output = $_.Exception.Message; retryable = $false; duration_ms = 0; failure = Get-FlintFailureDetails $null $_ }
 }
+# Tools that wait on kubectl or an HTTP request report that wait as duration_ms.
+$callMs = $result.duration_ms -as [long]
 $result = Protect-FlintValue $null $result
 Set-Content -LiteralPath $request.result_path -Value (ConvertTo-Json -InputObject $result -Depth 32 -Compress) -Encoding UTF8 -ErrorAction Stop
+# Standard output carries only these timings; the parent records them in the trajectory.
+$timing = [ordered]@{ load_ms = $loadMs; run_ms = Get-FlintElapsedMs $runStarted }
+if ($callMs -gt 0) { $timing.call_ms = $callMs }
+ConvertTo-Json -InputObject $timing -Compress

@@ -68,6 +68,7 @@ function Invoke-FlintKeyVaultListSecretsHttp {
     $metadata = ConvertTo-FlintSecretMetadata $response.content $ToolArguments.vault_name
     $result = Save-FlintResult $session (ConvertTo-Json -InputObject $metadata -Depth 8)
     $result.status = 'ok'; $result.http_status = 200; $result.exit_code = $null; $result.retryable = $false
+    $result.duration_ms = $response.duration_ms
     $result.names = @($metadata.value | ForEach-Object { $_.name })
     $result.page_count = $metadata.value.Count
     $result.has_more = [bool]$metadata.nextLink

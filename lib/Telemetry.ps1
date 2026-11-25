@@ -15,7 +15,7 @@ function Get-FlintFailureDetails {
 }
 
 function Write-FlintEvent {
-    param([hashtable]$Session, [string]$Type, $Data, [switch]$BestEffort)
+    param([hashtable]$Session, [string]$Type, $Data, [switch]$BestEffort, $Timing)
     if (-not $Session -or -not $Session.TrajectoryPath) { return }
     try {
         $Session.EventSequence++
@@ -26,6 +26,8 @@ function Write-FlintEvent {
             elapsed_ms = [long](($now - $Session.Started).TotalMilliseconds)
             event = $Type; data = Protect-FlintValue $Session $Data
         }
+        # Timings are numbers Flint measured itself, so they skip redaction.
+        if ($Timing) { $record.timing = $Timing }
         $json = ConvertTo-Json -InputObject $record -Depth 64 -Compress
         Add-Content -LiteralPath $Session.TrajectoryPath -Value $json -Encoding UTF8 -ErrorAction Stop
     } catch {
@@ -39,4 +41,19 @@ function Write-FlintEvent {
 function Get-FlintElapsedMs {
     param([datetime]$Since)
     return [long](([datetime]::UtcNow - $Since).TotalMilliseconds)
+}
+
+function ConvertFrom-FlintTiming {
+    param([AllowEmptyString()][string]$Output)
+    # A worker reports its own timings as one JSON line on standard output; other output is ignored.
+    $timing = [ordered]@{}
+    foreach ($line in @($Output -split "`r?`n")) {
+        if ($line -notmatch '^\{.*\}$') { continue }
+        try { $value = ConvertFrom-Json -InputObject $line -ErrorAction Stop } catch { continue }
+        foreach ($property in @($value.PSObject.Properties)) {
+            $milliseconds = $property.Value -as [long]
+            if ($property.Name -match '^[a-z_]+_ms$' -and $null -ne $milliseconds) { $timing[$property.Name] = $milliseconds }
+        }
+    }
+    return $timing
 }

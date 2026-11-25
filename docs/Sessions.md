@@ -28,6 +28,24 @@ Flint 工作时，进度行显示 `Working (12s · s to stop · Ctrl+C to exit)`
 
 Flint 把会话记录为**轨迹**，默认保存在工作目录的 `.flint/trajectories/`，每个会话一个文件，每行一个事件，只追加不修改。轨迹记录对话、工具调用、审批、重试和 token 用量；凭据在写入前脱敏，API key 不会写入。`-TrajectoryDirectory` 可以更改轨迹位置，Azure 和 kubectl 的结果文件仍保存在工作目录的 `.flint/results/`。轨迹无法写入时，Flint 停止后续动作。`-Resume <session-id>` 从轨迹恢复对话和用量，需要在原来的工作目录中运行；恢复的会话使用当前安装的插件，并且不带之前的审批。工作目录是 Git 仓库时，把 `.flint/` 加入它的 `.gitignore`。
 
+每个事件都带时间戳。`model_response` 和 `tool_finished` 事件另有一个与 `data` 并列的 `timing` 字段，记录耗时分解，用来判断慢在哪一步：
+
+| 事件 | 字段 | 含义 |
+|---|---|---|
+| `model_response` | `attempt_ms` | 这次请求的全程；`duration_ms` 还包括之前失败的尝试和重试等待 |
+| | `prepare_ms` | 生成请求并写入临时文件 |
+| | `process_ms` | 模型请求子进程从启动到输出收齐 |
+| | `worker.load_ms`、`worker.request_ms` | 子进程加载 Flint 脚本、读取请求 |
+| | `worker.serialize_ms`、`worker.http_ms` | 序列化请求、等待模型服务返回 |
+| | `read_ms` | 读取并解析响应 |
+| `tool_finished` | `total_ms` | 工具调用全程，包括等待审批 |
+| | `process_ms` | 工具子进程从启动到输出收齐 |
+| | `worker.load_ms`、`worker.run_ms` | 子进程加载 Flint 脚本、执行工具，包括保存结果 |
+| | `worker.call_ms` | 其中 kubectl 进程或 Azure HTTP 请求本身 |
+| | `read_ms` | 读取子进程返回的结果 |
+
+`process_ms` 减去子进程自己报告的各项，就是启动进程、退出和等待检测的开销。没有交互终端时，模型请求在主进程中完成，`serialize_ms` 和 `http_ms` 直接位于 `timing` 下。
+
 ## 命令行参数
 
 | 参数 | 默认值 | 说明 |

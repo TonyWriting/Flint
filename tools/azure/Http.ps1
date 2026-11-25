@@ -156,6 +156,7 @@ function Invoke-FlintAzureHttpResponse {
     }
     if ($Body) { $parameters.Body = $Body; $parameters.ContentType = 'application/json; charset=utf-8' }
     $statusCode = $null; $content = ''; $headers = $null; $failure = $null
+    $requestStarted = [datetime]::UtcNow
     try {
         $response = Invoke-WebRequest @parameters
         $statusCode = [int]$response.StatusCode
@@ -189,6 +190,7 @@ function Invoke-FlintAzureHttpResponse {
     $result.content = $content; $result.has_body = $true
     $result.retryable = $readOnly -and $statusCode -in @(429, 502, 503, 504)
     if ($failure) { $result.failure = $failure }
+    $result.duration_ms = Get-FlintElapsedMs $requestStarted
     return $result
 }
 

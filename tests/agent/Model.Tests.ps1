@@ -57,6 +57,11 @@ function Invoke-RestMethod {
     Assert-True (@($script:Frames | Where-Object { $_ -like '*Working (1s*' }).Count -gt 0 -and @($script:Frames | Where-Object { $_ -like '*Working (2s*' }).Count -gt 0) 'Continue updating elapsed time while HTTP is blocked.'
     $observed = ConvertFrom-Json -InputObject (Get-Content -LiteralPath (Join-Path $fixture 'observed.json') -Raw -Encoding UTF8)
     Assert-True ($observed.language_mode -ceq 'ConstrainedLanguage') 'Execute the model request in ConstrainedLanguage.'
+    $timing = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'model_response' })[-1].timing
+    Assert-True ($timing.worker.http_ms -ge 1900 -and $timing.process_ms -ge $timing.worker.http_ms -and $timing.worker.load_ms -gt 0 -and
+        $null -ne $timing.worker.request_ms -and $null -ne $timing.prepare_ms -and $timing.attempt_ms -ge $timing.process_ms) 'Separate the model service wait from worker and file overhead.'
+    $parsed = ConvertFrom-FlintTiming ("unrelated output`r`n" + '{"load_ms":12,"note":"x","http_ms":"slow","run_ms":3}' + "`r`n")
+    Assert-True ($parsed.Count -eq 2 -and $parsed.load_ms -eq 12 -and $parsed.run_ms -eq 3) 'Read only numeric worker timings and ignore other output.'
     foreach ($path in @($observed.request_path, $observed.response_path, ($observed.response_path + '.error'))) {
         Assert-True (-not (Test-Path -LiteralPath $path)) 'Clean up request, response and error files.'
     }
