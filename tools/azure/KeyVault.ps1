@@ -63,7 +63,7 @@ function Invoke-FlintKeyVaultListSecretsHttp {
         $message = 'Key Vault metadata listing failed.'
         if ($response.http_status -eq 403) { $message += ' Check secrets/list permission (or Key Vault Reader for RBAC) and vault network access.' }
         # Error bodies are not metadata and may contain sensitive or unexpected fields.
-        return @{ status = 'error'; http_status = $response.http_status; exit_code = $null; output = $message; retryable = [bool]$response.retryable }
+        return @{ status = 'error'; http_status = $response.http_status; exit_code = $null; output = $message; retryable = [bool]$response.retryable; duration_ms = $response.duration_ms }
     }
     $metadata = ConvertTo-FlintSecretMetadata $response.content $ToolArguments.vault_name
     $result = Save-FlintResult $session (ConvertTo-Json -InputObject $metadata -Depth 8)
