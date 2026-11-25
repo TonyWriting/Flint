@@ -21,6 +21,18 @@ function Assert-FlintResultJsonDepth {
     }
 }
 
+function Get-FlintResultPreview {
+    param([AllowEmptyString()][string]$Text)
+    # A result of up to 16384 characters goes to the model whole: reading it back later costs another
+    # model call, which outweighs the context it takes. Longer results return this much as a preview.
+    if ($Text.Length -le 16384) { return $Text }
+    $length = 16384
+    # Never end the preview on the first half of a surrogate pair.
+    $last = [int][char]$Text[$length - 1]
+    if ($last -ge 55296 -and $last -le 56319) { $length-- }
+    return $Text.Substring(0, $length)
+}
+
 function Save-FlintResult {
     param([hashtable]$Session, [AllowEmptyString()][string]$Content, [switch]$Kubernetes)
     $directory = Get-FlintResultDirectory $Session.Root $Session.Id
@@ -52,17 +64,12 @@ function Save-FlintResult {
         Assert-FlintResultPath $path
         Move-Item -LiteralPath $temporary -Destination $path -ErrorAction Stop
     } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
-    $previewLength = $text.Length
-    if ($previewLength -gt 2048) { $previewLength = 2048 }
-    if ($previewLength -gt 0 -and $previewLength -lt $text.Length) {
-        $last = [int][char]$text[$previewLength - 1]
-        if ($last -ge 55296 -and $last -le 56319) { $previewLength-- }
-    }
+    $preview = Get-FlintResultPreview $text
     $result = @{
         result_id = $id; result_path = $path; format = $format
         size_bytes = (Get-Item -LiteralPath $path -ErrorAction Stop).Length; content_chars = $text.Length
         item_count = $itemCount; next_link = $nextLink
-        output = $text.Substring(0, $previewLength); preview_truncated = ($previewLength -lt $text.Length)
+        output = $preview; preview_truncated = ($preview.Length -lt $text.Length)
     }
     if ($Kubernetes -and $format -eq 'json' -and $safe -isnot [array]) {
         if ($safe.items -is [array]) { $result.item_count = $safe.items.Count }

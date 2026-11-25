@@ -129,14 +129,9 @@ function Invoke-FlintCommand {
                 $result.stderr_preview_truncated = $errors.preview_truncated
             }
             # Keep short native output unchanged, including compact JSON and both streams.
-            $result.output = Protect-FlintValue $resultSession $output
-            if ($result.output.Length -gt 2048) {
-                $previewLength = 2048
-                $last = [int][char]$result.output[$previewLength - 1]
-                if ($last -ge 55296 -and $last -le 56319) { $previewLength-- }
-                $result.output = $result.output.Substring(0, $previewLength)
-                $result.preview_truncated = $true
-            }
+            $safeOutput = Protect-FlintValue $resultSession $output
+            $result.output = Get-FlintResultPreview $safeOutput
+            if ($result.output.Length -lt $safeOutput.Length) { $result.preview_truncated = $true }
         } catch {
             $result.status = 'error'; $result.retryable = $false
             $result.output = 'kubectl exited with code ' + $native.exit_code + ', but its output could not be saved: ' + $_.Exception.Message + ' Query actual state before repeating a change.'
