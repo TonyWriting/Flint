@@ -78,19 +78,19 @@ function Assert-FlintKubectlMutation {
     }
 }
 
-function Get-FlintSignInArguments {
+function Get-FlintCredentialKey {
     param([string[]]$Arguments)
-    # A harmless read with the same credential options signs in the kubeconfig user the command needs.
-    # Arguments after -- belong to a command inside the pod, not to kubectl.
+    # Groups calls that use the same kubeconfig credentials, so one sign-in answer covers them all. Flint does not
+    # know which options take values, so this key only groups calls; the sign-in itself runs the original command.
+    # Arguments after -- belong to a command inside the pod. Repeated options return $null: no grouping.
     $local = @()
     foreach ($argument in $Arguments) { if ($argument -ceq '--') { break }; $local += $argument }
-    $signIn = @('version')
+    $options = @()
     foreach ($option in @('--kubeconfig', '--context', '--cluster', '--user')) {
-        # A repeated or malformed option throws: signing in to a guessed user could pick the wrong credentials.
-        $value = Get-FlintKubectlOption $local $option
-        if ($value) { $signIn += ($option + '=' + $value) }
+        try { $value = Get-FlintKubectlOption $local $option } catch { return $null }
+        if ($value) { $options += ($option + '=' + $value) }
     }
-    return $signIn
+    return ($options -join ' ')
 }
 
 function New-FlintCommandInvocation {

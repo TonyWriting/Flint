@@ -201,8 +201,8 @@ function Read-FlintSignInApproval {
     Clear-FlintProgress $Session
     Write-Host ''
     Write-Host 'kubectl needs you to sign in: its kubeconfig credential plugin asked for an interactive sign-in.' -ForegroundColor Yellow
-    Write-Host (Protect-FlintText $Session ('Sign-in command: kubectl ' + ($Arguments -join ' '))) -ForegroundColor Yellow
-    Write-Host 'Sign in now in this terminal? The plugin keeps the sign-in until it expires.' -ForegroundColor Yellow
+    Write-Host (Protect-FlintText $Session ('Flint can run this read in the terminal, where the plugin shows how to sign in: kubectl ' + ($Arguments -join ' '))) -ForegroundColor Yellow
+    Write-Host 'Sign in now? The plugin keeps the sign-in until it expires.' -ForegroundColor Yellow
     try { return Read-Host 'y/n (default n)' } catch { return $null }
 }
 

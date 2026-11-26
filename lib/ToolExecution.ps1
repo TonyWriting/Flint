@@ -19,69 +19,64 @@ function Complete-FlintToolResult {
 
 function Invoke-FlintCommandSignIn {
     param([hashtable]$Session, $Invocation, [datetime]$CallStarted, [string]$CallId)
-    # Returns the outcome: signed_in, exited (the sign-in ended with an error exit code), declined, cancelled or failed.
-    # A sign-in that exited with an error may still have signed in, for example when only the cluster is unreachable.
-    $signIn = @(); $key = $null; $failure = $null
-    try {
-        $signIn = @(Get-FlintSignInArguments @($Invocation.arguments))
-        $key = ($signIn | Select-Object -Skip 1) -join ' '
-    } catch { $failure = 'Flint could not tell which kubeconfig credentials the command uses: ' + $_.Exception.Message }
-    if ($null -ne $key) {
-        # Parallel calls hit the same prompt; one answer covers every call that started before it.
-        # Context and user names are case-sensitive, so keys are compared with -ceq rather than a hashtable lookup.
-        $previous = @($Session.CommandSignIns | Where-Object { $_.key -ceq $key }) | Select-Object -Last 1
-        if ($previous -and $previous.completed -gt $CallStarted) { return $previous.outcome }
-    }
+    # Signs in by running the original read in the foreground, so kubectl itself chooses the credentials and the
+    # plugin shows its instructions in the terminal. Only reads come here: repeating a change would change twice.
+    # Returns the outcome: signed_in, exited (the read ended with an error exit code), declined, cancelled or failed.
+    # A read that exited with an error may still have signed in, for example when only the cluster is unreachable.
+    $commandArguments = @($Invocation.arguments)
+    $key = Get-FlintCredentialKey $commandArguments
+    if ($null -eq $key) { $key = 'call:' + $CallId }
+    # Parallel calls hit the same prompt; one answer covers every call that started before it.
+    # Context and user names are case-sensitive, so keys are compared with -ceq rather than a hashtable lookup.
+    $previous = @($Session.CommandSignIns | Where-Object { $_.key -ceq $key }) | Select-Object -Last 1
+    if ($previous -and $previous.completed -gt $CallStarted) { return $previous.outcome }
     # After the user pressed s, for example during an earlier sign-in, offer no further sign-in.
     if ($Session.StopRequested -or (Test-FlintStopKey $Session)) { return @{ outcome = 'cancelled' } }
-    $outcome = @{ outcome = 'failed'; exit_code = $null; failure = $failure }
+    $outcome = @{ outcome = 'declined'; exit_code = $null; failure = $null }
     $approved = $false; $started = [datetime]::UtcNow
-    if (-not $failure) {
-        $answer = Read-FlintSignInApproval $Session $signIn
-        $approved = $null -ne $answer -and $answer.Trim() -ceq 'y'
-        $outcome.outcome = 'declined'
-        if ($approved) {
-            Write-Host 'Follow the sign-in instructions below. Press s to cancel.' -ForegroundColor Yellow
-            $outputPath = Join-Path $env:TEMP ('flint-sign-in-' + [guid]::NewGuid().ToString('N') + '.txt')
-            $arguments = @(foreach ($value in $signIn) { ConvertTo-FlintNativeArgument $value })
-            # No window and no stderr redirection: the plugin prints its sign-in instructions in this terminal.
-            $state = @{ process = $null }
+    $answer = Read-FlintSignInApproval $Session $commandArguments
+    $approved = $null -ne $answer -and $answer.Trim() -ceq 'y'
+    if ($approved) {
+        Write-Host 'Follow the sign-in instructions below. Press s to cancel.' -ForegroundColor Yellow
+        $outputPath = Join-Path $env:TEMP ('flint-sign-in-' + [guid]::NewGuid().ToString('N') + '.txt')
+        $arguments = @(foreach ($value in $commandArguments) { ConvertTo-FlintNativeArgument $value })
+        # No window and no stderr redirection: the plugin prints its sign-in instructions in this terminal.
+        $state = @{ process = $null }
+        try {
+            # kubectl and its credential plugin must not inherit Flint's own credentials.
+            $savedEnvironment = @{}
+            Hide-FlintAzureSecretEnvironment $savedEnvironment
             try {
-                # kubectl and its credential plugin must not inherit Flint's own credentials.
-                $savedEnvironment = @{}
-                Hide-FlintAzureSecretEnvironment $savedEnvironment
-                try {
-                    $state.process = Start-Process -FilePath $Invocation.program.path -ArgumentList $arguments -WorkingDirectory $Session.Root `
-                        -NoNewWindow -PassThru -RedirectStandardOutput $outputPath -ErrorAction Stop
-                } finally { Restore-FlintAzureEnvironment $savedEnvironment }
-                $null = $state.process.Handle
-                # Device codes expire after about 15 minutes.
-                $deadline = [datetime]::UtcNow.AddMinutes(15)
-                while (-not $state.process.HasExited -and [datetime]::UtcNow -lt $deadline) {
-                    if (Test-FlintStopKey $Session) { break }
-                    Start-Sleep -Milliseconds 200
-                }
-                $outcome.outcome = 'cancelled'
-                if ($state.process.HasExited) {
-                    $outcome.exit_code = $state.process.ExitCode
-                    $outcome.outcome = 'exited'
-                    if ($outcome.exit_code -eq 0) { $outcome.outcome = 'signed_in' }
-                }
-            } catch {
-                # A failed launch ends this call only; it must not abort the other calls in a batch.
-                $outcome.outcome = 'failed'; $outcome.failure = 'Flint could not start the sign-in: ' + $_.Exception.Message
-            } finally {
-                Stop-FlintProcess $state
-                Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
+                $state.process = Start-Process -FilePath $Invocation.program.path -ArgumentList $arguments -WorkingDirectory $Session.Root `
+                    -NoNewWindow -PassThru -RedirectStandardOutput $outputPath -ErrorAction Stop
+            } finally { Restore-FlintAzureEnvironment $savedEnvironment }
+            $null = $state.process.Handle
+            # Device codes expire after about 15 minutes.
+            $deadline = [datetime]::UtcNow.AddMinutes(15)
+            while (-not $state.process.HasExited -and [datetime]::UtcNow -lt $deadline) {
+                if (Test-FlintStopKey $Session) { break }
+                Start-Sleep -Milliseconds 200
             }
-            if ($outcome.outcome -eq 'signed_in') { Write-Host 'Signed in.' -ForegroundColor Green }
-            elseif ($outcome.outcome -eq 'exited') { Write-Host ('The sign-in command exited with code ' + $outcome.exit_code + '.') -ForegroundColor Yellow }
-            else { Write-Host 'Sign-in did not complete.' -ForegroundColor Yellow }
+            $outcome.outcome = 'cancelled'
+            if ($state.process.HasExited) {
+                $outcome.exit_code = $state.process.ExitCode
+                $outcome.outcome = 'exited'
+                if ($outcome.exit_code -eq 0) { $outcome.outcome = 'signed_in' }
+            }
+        } catch {
+            # A failed launch ends this call only; it must not abort the other calls in a batch.
+            $outcome.outcome = 'failed'; $outcome.failure = 'Flint could not start the sign-in: ' + $_.Exception.Message
+        } finally {
+            Stop-FlintProcess $state
+            Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
         }
-        $Session.CommandSignIns = @(@($Session.CommandSignIns | Where-Object { $_.key -cne $key }) + @{ key = $key; completed = [datetime]::UtcNow; outcome = $outcome })
+        if ($outcome.outcome -eq 'signed_in') { Write-Host 'Signed in.' -ForegroundColor Green }
+        elseif ($outcome.outcome -eq 'exited') { Write-Host ('The read exited with code ' + $outcome.exit_code + '; running it again to check.') -ForegroundColor Yellow }
+        else { Write-Host 'Sign-in did not complete.' -ForegroundColor Yellow }
     }
+    $Session.CommandSignIns = @(@($Session.CommandSignIns | Where-Object { $_.key -cne $key }) + @{ key = $key; completed = [datetime]::UtcNow; outcome = $outcome })
     Write-FlintEvent $Session 'command_sign_in' @{
-        call_id = $CallId; arguments = $signIn; approved = $approved; outcome = $outcome.outcome; exit_code = $outcome.exit_code
+        call_id = $CallId; arguments = $commandArguments; approved = $approved; outcome = $outcome.outcome; exit_code = $outcome.exit_code
         failure = $outcome.failure; duration_ms = Get-FlintElapsedMs $started
     }
     return $outcome
@@ -90,13 +85,15 @@ function Invoke-FlintCommandSignIn {
 function Resolve-FlintCommandSignIn {
     param([hashtable]$Session, $Invocation, [bool]$ReadOnly, [datetime]$CallStarted, [string]$CallId, $Result)
     # Returns whether to run the call again; otherwise explains the outcome to the model in the result.
-    $signIn = Invoke-FlintCommandSignIn $Session $Invocation $CallStarted $CallId
     $prefix = 'kubectl stopped at an interactive sign-in prompt from its kubeconfig credential plugin. '
+    if (-not $ReadOnly) {
+        $Result.output = $prefix + 'The change was most likely not sent. Read the actual state first: Flint offers the user the sign-in on that read. Then submit the change again if it is still needed.'
+        return $false
+    }
+    $signIn = Invoke-FlintCommandSignIn $Session $Invocation $CallStarted $CallId
     # A read runs again whenever the sign-in ran to the end: the rerun shows whether it worked.
-    if ($ReadOnly -and $signIn.outcome -in @('signed_in', 'exited')) { return $true }
+    if ($signIn.outcome -in @('signed_in', 'exited')) { return $true }
     switch ($signIn.outcome) {
-        'signed_in' { $Result.output = $prefix + 'The user has now signed in. The change was most likely not sent: read the actual state, then submit the same command again if it is still needed.' }
-        'exited' { $Result.output = $prefix + 'The sign-in command exited with code ' + $signIn.exit_code + ', so sign-in may not have completed, or the cluster may be unreachable. The change was not run again: ask the user to check, then read the actual state.' }
         'cancelled' { $Result.output = $prefix + 'The user cancelled the sign-in.' }
         'failed' { $Result.output = $prefix + $signIn.failure + ' Ask the user to sign in, for example by running the kubectl command once in a terminal, then retry.' }
         default { $Result.output = $prefix + 'The user did not sign in. This is not a network or cluster failure. Ask the user to sign in, for example by running the kubectl command once in a terminal, then retry.' }
