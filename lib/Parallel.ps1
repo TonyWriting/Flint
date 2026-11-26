@@ -134,14 +134,17 @@ function Invoke-FlintParallelTools {
             # no worker is left running without its deadline and output checks.
             $awaiting = @($states | Where-Object { $_.awaiting_sign_in })
             if ($awaiting.Count -gt 0 -and @($states | Where-Object { -not $_.done -and -not $_.awaiting_sign_in }).Count -eq 0) {
+                $rerun = @()
                 foreach ($state in $awaiting) {
                     $state.awaiting_sign_in = $false
-                    if (Resolve-FlintCommandSignIn $Session $state.plan.invocation $true $state.started $state.call.call_id $state.result) {
-                        # Run it again with a fresh budget, since signing in waited for the user.
-                        $state.signed_in_retry = $true; $state.result = $null; $state.attempt = 0
-                        $state.deadline = [datetime]::UtcNow.AddSeconds($Session.ToolTimeoutSec); $state.next_attempt = [datetime]::UtcNow
-                    } else { Complete-FlintParallelCall $Session $state $Completed }
+                    if (Resolve-FlintCommandSignIn $Session $state.plan.invocation $true $state.started $state.call.call_id $state.result) { $rerun += $state }
+                    else { Complete-FlintParallelCall $Session $state $Completed }
                     if ($Session.LogFailed) { throw 'Trajectory write failed. Stopping parallel tools.' }
+                }
+                # Budgets start after every sign-in, so waiting for another context's sign-in costs a read nothing.
+                foreach ($state in $rerun) {
+                    $state.signed_in_retry = $true; $state.result = $null; $state.attempt = 0
+                    $state.deadline = [datetime]::UtcNow.AddSeconds($Session.ToolTimeoutSec); $state.next_attempt = [datetime]::UtcNow
                 }
             }
             if (@($states | Where-Object { -not $_.done }).Count -gt 0) { Start-Sleep -Milliseconds 100 }

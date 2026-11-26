@@ -146,6 +146,29 @@ class Recorder {
     Assert-True ($outputs['signin-a'].status -eq 'ok' -and $outputs['signin-b'].status -eq 'ok' -and $outputs['slow-sibling'].status -eq 'ok' -and $script:SignInAnswers -eq 1) 'Ask once for parallel reads that wait on the same sign-in.'
     Assert-True ($script:SiblingDoneAtSignIn -eq $true) 'Sign in only after other parallel calls finish, so their deadlines stay enforced.'
     Remove-Item -LiteralPath $marker -Force
+    # A slow second sign-in, for another context, does not use up the first read's budget.
+    $Session.ToolTimeoutSec = 8; $script:SignInAnswers = 0
+    function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; if ($script:SignInAnswers -eq 2) { Start-Sleep -Seconds 9 }; return 'y' }
+    $calls = @(
+        @{ type = 'function_call'; call_id = 'context-a'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read context a.' }) },
+        @{ type = 'function_call'; call_id = 'context-b'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'signin-cluster-b', '--namespace', 'team'); purpose = 'Read context b.' }) }
+    )
+    $completed = @{}; $progress = @{ tool_count = 0 }
+    Invoke-FlintParallelTools $Session $calls $completed $progress
+    $outputs = @{}
+    foreach ($item in $Session.History) { if ($item.type -eq 'function_call_output') { $outputs[$item.call_id] = ConvertFrom-Json $item.output } }
+    Assert-True ($outputs['context-a'].status -eq 'ok' -and $outputs['context-b'].status -eq 'ok' -and $script:SignInAnswers -eq 2) ('Start rerun budgets after every sign-in. ' + $outputs['context-a'].status)
+    $Session.ToolTimeoutSec = 30
+    Remove-Item -LiteralPath $marker -Force
+    # A stop, for example pressed during an earlier sign-in, ends sign-in handling without another prompt.
+    $script:SignInAnswers = 0
+    $Session.StopRequested = $true
+    $stopped = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'after-stop'); program = @{ path = 'unused.exe' } }
+    Assert-True (-not (Invoke-FlintCommandSignIn $Session $stopped ([datetime]::UtcNow) 'after-stop') -and $script:SignInAnswers -eq 0) 'Offer no sign-in after the user stopped the turn.'
+    $Session.StopRequested = $false
+    # Arguments after -- belong to the command inside the pod, so they never choose kubectl credentials.
+    $exec = @('exec', 'demo', '--context=prod', '--', 'app', '--kubeconfig=remote.yaml', '--context=inner')
+    Assert-True ((@(Get-FlintSignInArguments $exec) -join ' ') -ceq 'version --context=prod') 'Take credential options only from kubectl arguments.'
     $noisy = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'noisy-cluster', '--namespace', 'team') }
     Assert-True ($noisy.status -eq 'sign_in_required' -and $noisy.duration_ms -lt 15000 -and $noisy.output.Contains('not a network or cluster failure')) ('Find a prompt after long stderr diagnostics, and report a failed sign-in. ' + $noisy.output)
     # Context names are case-sensitive, so a sign-in for one context never stands in for another.

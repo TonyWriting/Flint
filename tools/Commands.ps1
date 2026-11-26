@@ -81,10 +81,13 @@ function Assert-FlintKubectlMutation {
 function Get-FlintSignInArguments {
     param([string[]]$Arguments)
     # A harmless read with the same credential options signs in the kubeconfig user the command needs.
+    # Arguments after -- belong to a command inside the pod, not to kubectl.
+    $local = @()
+    foreach ($argument in $Arguments) { if ($argument -ceq '--') { break }; $local += $argument }
     $signIn = @('version')
     foreach ($option in @('--kubeconfig', '--context', '--cluster', '--user')) {
         $value = $null
-        try { $value = Get-FlintKubectlOption $Arguments $option } catch { }
+        try { $value = Get-FlintKubectlOption $local $option } catch { }
         if ($value) { $signIn += ($option + '=' + $value) }
     }
     return $signIn

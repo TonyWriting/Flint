@@ -26,6 +26,8 @@ function Invoke-FlintCommandSignIn {
     # Context and user names are case-sensitive, so keys are compared with -ceq rather than a hashtable lookup.
     $previous = @($Session.CommandSignIns | Where-Object { $_.key -ceq $key }) | Select-Object -Last 1
     if ($previous -and $previous.completed -gt $CallStarted) { return [bool]$previous.signed_in }
+    # After the user pressed s, for example during an earlier sign-in, offer no further sign-in.
+    if ($Session.StopRequested -or (Test-FlintStopKey $Session)) { return $false }
     $answer = Read-FlintSignInApproval $Session $signIn
     $approved = $null -ne $answer -and $answer.Trim() -ceq 'y'
     $signedIn = $false; $exitCode = $null; $started = [datetime]::UtcNow
