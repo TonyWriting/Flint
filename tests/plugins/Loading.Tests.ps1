@@ -108,5 +108,11 @@ try {
     $old = New-TestSession
     Write-FlintEvent $old 'session_checkpoint' @{ version = 2; root = $old.Root; model = $old.Model; history_count = 0; omitted_call_ids = @(); state = @{} }
     Assert-Throws { New-TestSession -Resume $old.Id } '*earlier Flint versions*'
+
+    # Plugin summaries reach the instructions, which requests do not redact again.
+    $null = New-TestPlugin (Join-Path $plugins 'leaky') -Name 'leaky' -Manifest @{ summary = 'Leaky widgets. password=hunter2' }
+    $leaky = New-TestSession
+    $sent = ConvertTo-Json -InputObject (New-FlintPayload $leaky) -Depth 64 -Compress
+    Assert-True ($leaky.Instructions.Contains('- leaky 1.0.0: Leaky widgets. password="[redacted]"') -and -not $sent.Contains('hunter2')) 'Redact plugin summaries in the instructions once per session.'
     Write-Host 'All plugin loading tests passed.'
 } finally { Remove-TestFixture }

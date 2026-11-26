@@ -15,20 +15,28 @@ function Get-FlintFailureDetails {
 }
 
 function Write-FlintEvent {
-    param([hashtable]$Session, [string]$Type, $Data, [switch]$BestEffort, $Timing)
+    param([hashtable]$Session, [string]$Type, $Data, [switch]$BestEffort, $Timing, [switch]$Redacted)
     if (-not $Session -or -not $Session.TrajectoryPath) { return }
     try {
         $Session.EventSequence++
         # One clock reading keeps timestamp - elapsed_ms equal to the session start for resume.
         $now = [datetime]::UtcNow
+        $safeData = $Data
+        # Redacted data was redacted when it entered the session, such as history items.
+        if (-not $Redacted) { $safeData = Protect-FlintValue $Session $Data }
         $record = [ordered]@{
             timestamp = $now.ToString('o'); session_id = $Session.Id; sequence = $Session.EventSequence
             elapsed_ms = [long](($now - $Session.Started).TotalMilliseconds)
-            event = $Type; data = Protect-FlintValue $Session $Data
+            event = $Type; data = $safeData
         }
         # Timings are numbers Flint measured itself, so they skip redaction.
         if ($Timing) { $record.timing = $Timing }
         $json = ConvertTo-Json -InputObject $record -Depth 64 -Compress
+        # Flint's own credentials are still checked; finding one redacts the data after all.
+        if ($Redacted -and (Test-FlintSecretInJson $Session $json)) {
+            $record.data = Protect-FlintValue $Session $Data
+            $json = ConvertTo-Json -InputObject $record -Depth 64 -Compress
+        }
         Add-Content -LiteralPath $Session.TrajectoryPath -Value $json -Encoding UTF8 -ErrorAction Stop
     } catch {
         $Session.LogFailed = $true

@@ -44,7 +44,9 @@ function Invoke-RestMethod {
         throw $errorObject
     }
     if ($request.input -eq 'malformed') { Set-Content -LiteralPath $OutFile -Value '{broken' -Encoding UTF8; return }
-    $response = @{ status = 'completed'; output = @(@{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = 'Ready.' }) }) }
+    # The service echoes the request's instructions and tools in every response.
+    $response = @{ status = 'completed'; instructions = 'Echoed instructions.'; tools = @(@{ type = 'function'; name = 'echoed_tool' })
+        output = @(@{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = 'Ready.' }) }) }
     Set-Content -LiteralPath $OutFile -Value (ConvertTo-Json -InputObject $response -Depth 16) -Encoding UTF8
 }
 '@
@@ -57,7 +59,10 @@ function Invoke-RestMethod {
     Assert-True (@($script:Frames | Where-Object { $_ -like '*Working (1s*' }).Count -gt 0 -and @($script:Frames | Where-Object { $_ -like '*Working (2s*' }).Count -gt 0) 'Continue updating elapsed time while HTTP is blocked.'
     $observed = ConvertFrom-Json -InputObject (Get-Content -LiteralPath (Join-Path $fixture 'observed.json') -Raw -Encoding UTF8)
     Assert-True ($observed.language_mode -ceq 'ConstrainedLanguage') 'Execute the model request in ConstrainedLanguage.'
-    $timing = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'model_response' })[-1].timing
+    $logged = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'model_response' })[-1]
+    Assert-True ($null -eq $response.instructions -and $null -eq $response.tools -and $null -eq $logged.data.response.instructions -and $null -eq $logged.data.response.tools -and
+        $logged.data.response.status -eq 'completed') 'Drop the echoed instructions and tools before a response is redacted and logged.'
+    $timing = $logged.timing
     Assert-True ($timing.worker.http_ms -ge 1900 -and $timing.process_ms -ge $timing.worker.http_ms -and $timing.worker.load_ms -gt 0 -and
         $null -ne $timing.worker.request_ms -and $null -ne $timing.prepare_ms -and $timing.attempt_ms -ge $timing.process_ms) 'Separate the model service wait from worker and file overhead.'
     $parsed = ConvertFrom-FlintTiming ("unrelated output`r`n" + '{"load_ms":12,"note":"x","http_ms":"slow","run_ms":3}' + "`r`n")
