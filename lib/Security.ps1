@@ -5,6 +5,23 @@ function Get-FlintSessionSecrets {
     return @(@($Session.ApiKey, $Session.Azure.AccessToken, $Session.Azure.KeyVault.AccessToken) | Where-Object { $_ })
 }
 
+function Test-FlintSecretInJson {
+    param([hashtable]$Session, [AllowEmptyString()][string]$Json)
+    # Checks serialized data that was redacted when it entered the session. A credential inside a JSON string
+    # appears as ConvertTo-Json escapes it, once more for each level of JSON embedded in a string.
+    foreach ($secret in @(Get-FlintSessionSecrets $Session)) {
+        $form = $secret
+        for ($level = 0; $level -lt 4; $level++) {
+            if ($Json.Contains($form)) { return $true }
+            $escaped = ConvertTo-Json -InputObject $form -Compress
+            $escaped = $escaped.Substring(1, $escaped.Length - 2)
+            if ($escaped -ceq $form) { break }
+            $form = $escaped
+        }
+    }
+    return $false
+}
+
 function Get-FlintJsonStrings {
     param($Value)
     # Every string value and property name of decoded JSON: the text a tool actually receives.

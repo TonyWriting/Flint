@@ -60,6 +60,8 @@ function New-AgentSession {
         WorkerPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'tools\Worker.ps1'
         ModelWorkerPath = Join-Path $PSScriptRoot 'ModelWorker.ps1'
     }
+    # Instructions include plugin summaries. Requests do not redact them again, so they are redacted once here.
+    $session.Instructions = Protect-FlintText $session $session.Instructions
     if ($saved) {
         foreach ($name in @(Get-FlintCheckpointFields)) { $session[$name] = $saved.state[$name] }
         # Current configuration and registered tools remain authoritative after restoration.

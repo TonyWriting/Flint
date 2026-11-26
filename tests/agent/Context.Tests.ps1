@@ -156,6 +156,31 @@ try {
     Assert-True (-not $sent.Contains($leak.ApiKey) -and $sent.Contains('Use [redacted]')) 'Never send Flint''s own credentials, even from a history item added without redaction.'
     $logged = Get-Content -LiteralPath $leak.TrajectoryPath -Raw -Encoding UTF8
     Assert-True (-not $logged.Contains($leak.ApiKey) -and $logged.Contains('Use [redacted]')) 'Never log Flint''s own credentials in the appended history.'
+
+    # Credentials can hide behind JSON escapes. Look in every string, decoding JSON inside strings as the service could.
+    function Test-TestDecodedText {
+        param($Value, [string]$Needle)
+        foreach ($text in @(Get-FlintJsonStrings $Value)) {
+            if ($text.Contains($Needle)) { return $true }
+            if ($text.TrimStart().StartsWith('{') -or $text.TrimStart().StartsWith('[')) {
+                try { if (Test-TestDecodedText (ConvertFrom-Json -InputObject $text -ErrorAction Stop) $Needle) { return $true } } catch { }
+            }
+        }
+        return $false
+    }
+    $escaped = New-TestSession
+    $script:LoopPayloads = @()
+    $script:LoopReplies = @(@{ status = 'completed'; output = @(@{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = 'Noted.' }) }) })
+    $prompt = '{"note":"\u' + ('{0:x4}' -f [int][char]$escaped.ApiKey[0]) + $escaped.ApiKey.Substring(1) + '"}'
+    $null = Invoke-AgentTurn $escaped $prompt 2
+    $sent = ConvertFrom-Json (ConvertTo-Json -InputObject $script:LoopPayloads[0] -Depth 64 -Compress)
+    Assert-True (-not (Test-TestDecodedText $sent $escaped.ApiKey) -and -not (Test-TestDecodedText @(Get-TestEvents $escaped.TrajectoryPath) $escaped.ApiKey)) 'Redact a credential written with a JSON escape in a prompt.'
+    $quoted = New-TestSession
+    $quoted.ApiKey = 'key"with\escapes-0123'
+    $quoted.History = @(@{ role = 'user'; content = 'Read the note.' })
+    $quoted.History += New-TestCall 'note_1' 'read_file' '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200}' @{ status = 'ok'; exit_code = 0; output = (ConvertTo-Json -InputObject @{ note = $quoted.ApiKey } -Compress) }
+    $sent = ConvertFrom-Json (ConvertTo-Json -InputObject (New-FlintPayload $quoted) -Depth 64 -Compress)
+    Assert-True (-not (Test-TestDecodedText $sent $quoted.ApiKey) -and -not (Test-TestDecodedText @(Get-TestEvents $quoted.TrajectoryPath) $quoted.ApiKey)) 'Find a credential that JSON escapes inside embedded JSON.'
     Remove-Item -LiteralPath function:Write-Host
     Write-Host 'All context tests passed.'
 } finally { Remove-TestFixture }

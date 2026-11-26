@@ -9,12 +9,9 @@
         parallel_tool_calls = $true
         input = @(Get-FlintModelInput $Session)
     }
-    # History items are redacted when they are added, so a request does not redact them again. Every request is
-    # still checked for Flint's own credentials; finding one falls back to redacting the whole request.
-    $json = ConvertTo-Json -InputObject $payload -Depth 64 -Compress
-    foreach ($secret in @(Get-FlintSessionSecrets $Session)) {
-        if ($json.Contains($secret)) { return Protect-FlintValue $Session $payload }
-    }
+    # History items and instructions are redacted when they enter the session, so a request does not redact them
+    # again. Every request is still checked for Flint's own credentials; finding one redacts the whole request.
+    if (Test-FlintSecretInJson $Session (ConvertTo-Json -InputObject $payload -Depth 64 -Compress)) { return Protect-FlintValue $Session $payload }
     return $payload
 }
 

@@ -22,7 +22,8 @@ function Invoke-AgentTurn {
     Start-FlintTurnUi $Session
     try {
         if ($Session.LogFailed) { throw 'Trajectory is unavailable. Start a new session.' }
-        $safePrompt = Protect-FlintText $Session $UserPrompt
+        # Requests do not redact the history again, so a prompt containing JSON is redacted with its decoded values now.
+        $safePrompt = [string](Protect-FlintValue $Session $UserPrompt)
         Write-FlintEvent $Session 'user_input' @{ text = $safePrompt; max_model_calls = $TurnLimit }
         $Session.History += @{ role = 'user'; content = $safePrompt }
         for ($turn = 0; $turn -lt $TurnLimit; $turn++) {

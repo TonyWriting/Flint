@@ -32,11 +32,10 @@ function Write-FlintEvent {
         # Timings are numbers Flint measured itself, so they skip redaction.
         if ($Timing) { $record.timing = $Timing }
         $json = ConvertTo-Json -InputObject $record -Depth 64 -Compress
-        if ($Redacted) {
-            # Flint's own credentials are still checked; finding one redacts the data after all.
-            foreach ($secret in @(Get-FlintSessionSecrets $Session)) {
-                if ($json.Contains($secret)) { $record.data = Protect-FlintValue $Session $Data; $json = ConvertTo-Json -InputObject $record -Depth 64 -Compress; break }
-            }
+        # Flint's own credentials are still checked; finding one redacts the data after all.
+        if ($Redacted -and (Test-FlintSecretInJson $Session $json)) {
+            $record.data = Protect-FlintValue $Session $Data
+            $json = ConvertTo-Json -InputObject $record -Depth 64 -Compress
         }
         Add-Content -LiteralPath $Session.TrajectoryPath -Value $json -Encoding UTF8 -ErrorAction Stop
     } catch {
