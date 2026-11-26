@@ -117,10 +117,11 @@ function Get-FlintCheckpointFields {
 function Save-FlintHistory {
     param([hashtable]$Session, [switch]$BestEffort)
     # History only grows, so each item is written once and resume concatenates the appended items.
+    # Items are redacted when they are added to the history.
     $history = @($Session.History)
     if ($Session.LogFailed -or $history.Count -le $Session.HistoryLogged) { return }
     $items = @($history[$Session.HistoryLogged..($history.Count - 1)])
-    Write-FlintEvent $Session 'history_appended' @{ start = $Session.HistoryLogged; items = $items } -BestEffort:$BestEffort
+    Write-FlintEvent $Session 'history_appended' @{ start = $Session.HistoryLogged; items = $items } -BestEffort:$BestEffort -Redacted
     if (-not $Session.LogFailed) { $Session.HistoryLogged = $history.Count }
 }
 

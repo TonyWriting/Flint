@@ -30,8 +30,12 @@ function Test-FlintUnsafeArguments {
 }
 
 function Protect-FlintText {
-    param([hashtable]$Session, [AllowEmptyString()][string]$Text)
-    foreach ($secret in @(Get-FlintSessionSecrets $Session)) { $Text = $Text.Replace($secret, '[redacted]') }
+    param([hashtable]$Session, [AllowEmptyString()][string]$Text, [object[]]$Secrets)
+    # Protect-FlintValue looks up the session credentials once for a whole value instead of once per string.
+    if ($null -eq $Secrets) { $Secrets = @(Get-FlintSessionSecrets $Session) }
+    foreach ($secret in $Secrets) { $Text = $Text.Replace($secret, '[redacted]') }
+    # Every pattern below needs one of these markers. Most text has none, and one check costs less than every replacement.
+    if ($Text -notmatch '(?i)[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|PRIVATE KEY|Bearer|Basic|://|api[-_]?key|token|passw|secret|accountkey|sig|authorization|eyJ|sk-|gh[pousr]_|github_pat_') { return $Text }
     $Text = $Text -replace '\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', ''
     $Text = $Text -replace '\x1b\[[0-?]*[ -/]*[@-~]', ''
     $Text = $Text -replace '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', ''
@@ -45,10 +49,11 @@ function Protect-FlintText {
 }
 
 function Protect-FlintValue {
-    param([hashtable]$Session, $Value, [switch]$Untrusted)
+    param([hashtable]$Session, $Value, [switch]$Untrusted, [object[]]$Secrets)
     # Untrusted values come from tools or were decoded from text. They never count as Flint's own
     # conversation items, whatever type they declare.
     if ($null -eq $Value) { return $null }
+    if ($null -eq $Secrets) { $Secrets = @(Get-FlintSessionSecrets $Session) }
     if ($Value -is [string]) {
         # Responses arguments and tool outputs contain JSON inside JSON strings.
         # Redact decoded values so quotes and backslashes stay valid on repeated passes.
@@ -59,17 +64,17 @@ function Protect-FlintValue {
                     if ($null -eq $decoded) { $decoded = @() } else { $decoded = @($decoded) }
                 }
                 $originalJson = ConvertTo-Json -InputObject $decoded -Depth 64 -Compress
-                $safeJson = ConvertTo-Json -InputObject (Protect-FlintValue $Session $decoded -Untrusted) -Depth 64 -Compress
+                $safeJson = ConvertTo-Json -InputObject (Protect-FlintValue $Session $decoded -Untrusted -Secrets $Secrets) -Depth 64 -Compress
                 if ($originalJson -ceq $safeJson) { return $Value }
                 return $safeJson
             } catch { }
         }
-        return Protect-FlintText $Session $Value
+        return Protect-FlintText $Session $Value $Secrets
     }
     # ConvertFrom-Json can decorate arrays with PSObject metadata in Windows PowerShell.
     # Preserve their array shape before inspecting object properties.
     if ($Value -is [array]) {
-        $safeItems = @(foreach ($item in $Value) { Protect-FlintValue $Session $item -Untrusted:$Untrusted })
+        $safeItems = @(foreach ($item in $Value) { Protect-FlintValue $Session $item -Untrusted:$Untrusted -Secrets $Secrets })
         return ,$safeItems
     }
     if ($Value -is [System.Collections.IDictionary] -or $Value -is [pscustomobject]) {
@@ -77,13 +82,13 @@ function Protect-FlintValue {
         $names = @($Value.PSObject.Properties | ForEach-Object { $_.Name })
         if ($Value -is [System.Collections.IDictionary]) { $names = @($Value.Keys) }
         foreach ($name in $names) {
-            $safeName = Protect-FlintText $Session $name
+            $safeName = Protect-FlintText $Session $name $Secrets
             if (-not $Untrusted -and $name -ceq 'encrypted_content' -and $Value.type -ceq 'reasoning') {
                 # Service-issued reasoning state goes back unchanged; a pattern match inside it would break every later request.
                 $safe[$safeName] = $Value.$name
             } elseif ($name -match '(?i)(?:^|[_-])(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|password|passwd|client[-_]?secret|secret|accountkey|sig|signature|authorization)$') {
                 $safe[$safeName] = '[redacted]'
-            } else { $safe[$safeName] = Protect-FlintValue $Session $Value.$name -Untrusted:$Untrusted }
+            } else { $safe[$safeName] = Protect-FlintValue $Session $Value.$name -Untrusted:$Untrusted -Secrets $Secrets }
         }
         return $safe
     }

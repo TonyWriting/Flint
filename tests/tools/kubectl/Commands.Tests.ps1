@@ -74,6 +74,11 @@ class Recorder {
             for (int i = 0; i < 300; i++) Console.WriteLine(line);
             return 0;
         }
+        if (args.Length > 0 && args[0] == "indented") {
+            // kubectl prints indented JSON; nothing in this object needs redaction.
+            Console.Write("{\n    \"kind\": \"Application\",\n    \"spec\": {\n        \"notes\": \"" + new string('n', 20000) + "\"\n    },\n    \"status\": {\n        \"applicationState\": \"Available\"\n    }\n}\n");
+            return 0;
+        }
         if (args.Length > 1 && args[0] == "get" && args[1] == "deployments") {
             Console.Write("{\"kind\":\"DeploymentList\",\"metadata\":{\"continue\":\"next-page\"},\"items\":[{\"name\":\"first\",\"padding\":\"" + new string('x', 600000) + "\"},{\"name\":\"last-record\",\"password\":\"private-value\"}]}");
             Console.Error.Write("Fixture warning on stderr.");
@@ -117,6 +122,11 @@ class Recorder {
     Assert-True ((Get-Content -LiteralPath $result.stderr_result_path -Raw).Contains('Fixture warning')) 'Preserve diagnostic stderr separately.'
     $search = Invoke-TestTool search_text @{ path = $result.result_path; keyword = 'last-record' }
     Assert-True ($search.status -eq 'ok' -and $search.matches_returned -eq 1) 'Search the saved command response past the preview boundary.'
+    # The model searches what it saw in the preview, so the saved file keeps kubectl's own formatting.
+    $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('indented') }
+    $saved = Get-Content -LiteralPath $result.result_path -Raw -Encoding UTF8
+    $search = Invoke-TestTool search_text @{ path = $result.result_path; keyword = '"status": {' }
+    Assert-True ($result.preview_truncated -and $saved.StartsWith($result.output) -and $saved.Contains("`n    `"status`": {`n") -and $search.matches_returned -eq 1) ('Save indented kubectl JSON as printed when nothing needs redaction. ' + $saved.Substring(0, 80))
     $patch = '[{"op":"test","path":"/metadata/resourceVersion","value":"15"},{"op":"replace","path":"/spec/workload/0/manifest/spec/replicas","value":6}]'
     $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('patch', 'deployments', 'demo', '--context', 'cc-test', '--namespace', 'team', '--type=json', '--patch', $patch) }
     Assert-True ($result.status -eq 'ok' -and $result.verification_required -and -not $result.outcome_unknown) 'Require state verification after a successful scoped mutation.'

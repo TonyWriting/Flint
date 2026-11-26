@@ -147,6 +147,15 @@ try {
     Write-FlintCheckpoint $small
     $smallResumed = New-TestSession -Resume $small.Id
     Assert-True ($smallResumed.OmittedOutputs['short_1'] -ceq $small.OmittedOutputs['short_1']) 'Rebuild every recorded omission on resume, whatever its size.'
+
+    # History items are redacted when they are added. A request and the trajectory still never carry Flint's own credentials.
+    $leak = New-TestSession
+    Assert-True ([bool]$leak.ApiKey) 'Use a session with a model credential.'
+    $leak.History = @(@{ role = 'user'; content = ('Use ' + $leak.ApiKey) })
+    $sent = ConvertTo-Json -InputObject (New-FlintPayload $leak) -Depth 64 -Compress
+    Assert-True (-not $sent.Contains($leak.ApiKey) -and $sent.Contains('Use [redacted]')) 'Never send Flint''s own credentials, even from a history item added without redaction.'
+    $logged = Get-Content -LiteralPath $leak.TrajectoryPath -Raw -Encoding UTF8
+    Assert-True (-not $logged.Contains($leak.ApiKey) -and $logged.Contains('Use [redacted]')) 'Never log Flint''s own credentials in the appended history.'
     Remove-Item -LiteralPath function:Write-Host
     Write-Host 'All context tests passed.'
 } finally { Remove-TestFixture }

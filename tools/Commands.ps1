@@ -122,7 +122,8 @@ function Invoke-FlintCommand {
         if (Test-FlintKubectlMutation $ToolArguments.arguments) { $result.verification_required = $true; $result.outcome_unknown = $true }
         return $result
     }
-    $output = (@($native.stdout.TrimEnd("`r", "`n"), $native.stderr.TrimEnd("`r", "`n")) | Where-Object { $_ -ne '' }) -join [Environment]::NewLine
+    $stdout = $native.stdout.TrimEnd("`r", "`n"); $stderr = $native.stderr.TrimEnd("`r", "`n")
+    $output = (@($stdout, $stderr) | Where-Object { $_ -ne '' }) -join [Environment]::NewLine
     $retryable = $native.status -eq 'error' -and $output -match '(?i)connection reset|temporarily unavailable|ServiceUnavailable|TLS handshake timeout|i/o timeout|TooManyRequests'
     $result = @{ status = $native.status; exit_code = $native.exit_code; output = $output; retryable = [bool]$retryable; duration_ms = $native.duration_ms }
     $result.capture_incomplete = $native.status -notin @('ok', 'error')
@@ -133,20 +134,20 @@ function Invoke-FlintCommand {
     if ($SessionId -and $output) {
         $resultSession = @{ Root = $Root; Id = $SessionId }
         try {
-            $content = $native.stdout
-            if (-not $content) { $content = $native.stderr }
+            $content = $stdout
+            if (-not $content) { $content = $stderr }
             $saved = Save-FlintResult $resultSession $content -Kubernetes
-            foreach ($key in $saved.Keys) { if ($key -cne 'output') { $result[$key] = $saved[$key] } }
-            if ($native.stdout -and $native.stderr) {
-                $errors = Save-FlintResult $resultSession $native.stderr
+            foreach ($key in $saved.Keys) { $result[$key] = $saved[$key] }
+            if ($stdout -and $stderr) {
+                $errors = Save-FlintResult $resultSession $stderr
                 $result.stderr_result_path = $errors.result_path
                 $result.stderr = $errors.output
                 $result.stderr_preview_truncated = $errors.preview_truncated
+                # Both streams go to the model together; each stream also has its own saved file.
+                $safeOutput = Protect-FlintValue $resultSession $output
+                $result.output = Get-FlintResultPreview $safeOutput
+                if ($result.output.Length -lt $safeOutput.Length) { $result.preview_truncated = $true }
             }
-            # Keep short native output unchanged, including compact JSON and both streams.
-            $safeOutput = Protect-FlintValue $resultSession $output
-            $result.output = Get-FlintResultPreview $safeOutput
-            if ($result.output.Length -lt $safeOutput.Length) { $result.preview_truncated = $true }
         } catch {
             $result.status = 'error'; $result.retryable = $false
             $result.output = 'kubectl exited with code ' + $native.exit_code + ', but its output could not be saved: ' + $_.Exception.Message + ' Query actual state before repeating a change.'

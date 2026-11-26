@@ -9,7 +9,13 @@
         parallel_tool_calls = $true
         input = @(Get-FlintModelInput $Session)
     }
-    return Protect-FlintValue $Session $payload
+    # History items are redacted when they are added, so a request does not redact them again. Every request is
+    # still checked for Flint's own credentials; finding one falls back to redacting the whole request.
+    $json = ConvertTo-Json -InputObject $payload -Depth 64 -Compress
+    foreach ($secret in @(Get-FlintSessionSecrets $Session)) {
+        if ($json.Contains($secret)) { return Protect-FlintValue $Session $payload }
+    }
+    return $payload
 }
 
 function New-FlintPayload {
@@ -139,6 +145,13 @@ function Invoke-AgentResponse {
             $readStarted = [datetime]::UtcNow
             if ((Get-Item -LiteralPath $responsePath).Length -gt 8388608) { throw 'Model response exceeds 8 MiB.' }
             $response = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $responsePath -Raw -Encoding UTF8 -ErrorAction Stop) -ErrorAction Stop
+            if ($response -is [pscustomobject]) {
+                # The service echoes the request's instructions and tools. The session start records them, so the
+                # response drops them before it is redacted and logged.
+                $kept = [ordered]@{}
+                foreach ($property in @($response.PSObject.Properties)) { if ($property.Name -cnotin @('instructions', 'tools')) { $kept[$property.Name] = $property.Value } }
+                $response = $kept
+            }
             $timing.read_ms = Get-FlintElapsedMs $readStarted
             $timing.attempt_ms = Get-FlintElapsedMs $attemptStarted
             # The trajectory event is redacted. The caller keeps a redacted copy and runs tool calls exactly as the model wrote them.
