@@ -34,14 +34,18 @@ try {
     )
     $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 15 $WorkRoot -PromptPattern $promptPattern
     Assert-True ($result.status -eq 'prompted' -and $result.duration_ms -lt 10000 -and $result.stderr.Contains('LATE42')) ('Stop at a prompt that follows long stderr output.' + (Format-TestResult $result))
+    # Shared CI runners have taken 20 to 30 seconds to write about 1 MiB that takes 2 seconds locally. The output
+    # limit ends these processes, so a generous time budget only matters when the limit fails. Each fixture sleeps
+    # longer than the budget, so a slow write never lets it exit before the limit is reached.
+    $outputLimitTimeout = 120
     # Stderr beyond the output limit is never read for a prompt; the limit ends the process instead.
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value @(
         "[Console]::Error.Write('x' * 1200000)"
         "[Console]::Error.WriteLine()"
         "[Console]::Error.WriteLine('To sign in, use a web browser to open the page https://login.example.com/device and enter the code BIG42 to authenticate.')"
-        'Start-Sleep -Seconds 30'
+        'Start-Sleep -Seconds 600'
     )
-    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 15 $WorkRoot -PromptPattern $promptPattern
+    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) $outputLimitTimeout $WorkRoot -PromptPattern $promptPattern
     Assert-True ($result.status -eq 'output_limit') ('Apply the output limit before scanning stderr for a prompt.' + (Format-TestResult $result))
     # The limit covers stdout and stderr together, even when stderr alone is small and holds a prompt.
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value @(
@@ -49,9 +53,9 @@ try {
         'Start-Sleep -Milliseconds 1500'
         "[Console]::Error.WriteLine('e' * 300000)"
         "[Console]::Error.WriteLine('To sign in, use a web browser to open the page https://login.example.com/device and enter the code BOTH42 to authenticate.')"
-        'Start-Sleep -Seconds 30'
+        'Start-Sleep -Seconds 600'
     )
-    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 15 $WorkRoot -PromptPattern $promptPattern
+    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) $outputLimitTimeout $WorkRoot -PromptPattern $promptPattern
     Assert-True ($result.status -eq 'output_limit') ('Apply the combined output limit before a prompt.' + (Format-TestResult $result))
     $pidPath = Join-Path $TestRoot 'pid.txt'
     $pidLiteral = $pidPath.Replace("'", "''")
@@ -60,11 +64,11 @@ try {
     Assert-True ($result.status -eq 'timeout' -and $result.duration_ms -lt 10000) ('Bound a real native process by wall-clock time.' + (Format-TestResult $result))
     $childId = [int](Get-Content -LiteralPath $pidPath)
     Assert-True (-not (Get-Process -Id $childId -ErrorAction SilentlyContinue)) 'Terminate the timed-out process.'
-    # A process that keeps writing must stop at the output cap well before its time budget.
+    # A process that keeps writing must stop at the output cap, not at its time budget.
     # Large writes reach the 1 MiB cap in a few iterations, even on a slow shared runner.
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value "while (`$true) { Write-Output ('x' * 65536) }"
-    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 30 $WorkRoot
-    Assert-True ($result.status -eq 'output_limit' -and $result.duration_ms -lt 30000) ('Cap native output independently of the tool timeout.' + (Format-TestResult $result))
+    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) $outputLimitTimeout $WorkRoot
+    Assert-True ($result.status -eq 'output_limit') ('Cap native output independently of the tool timeout.' + (Format-TestResult $result))
 
     # Use a harness-owned fixture as the worker to verify timeout behavior at the tool boundary.
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value 'param($RequestPath); Start-Sleep -Seconds 60'

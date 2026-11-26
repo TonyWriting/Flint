@@ -201,7 +201,9 @@ class Recorder {
     Assert-True ($hung.status -eq 'timeout' -and $hung.output.Contains('Unable to connect to the server')) ('Return what kubectl printed before a timeout. ' + $hung.output)
     $Session.ToolTimeoutSec = 2
     Assert-True ((Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('sleep') }).status -eq 'timeout') 'Bound the entire worker and native process tree.'
-    $Session.ToolTimeoutSec = 30
+    # Shared CI runners have taken more than 25 seconds to write this 1.2 MB. The output limit, not the time
+    # budget, decides the result, so the budget only bounds a failing run.
+    $Session.ToolTimeoutSec = 120
     $oversized = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('large') }
     Assert-True ($oversized.status -eq 'output_limit') ('Bound native output collection. Got ' + $oversized.status + ': ' + $oversized.output)
     Assert-True ((Invoke-TestTool run_command @{ executor = 'az'; arguments = @('version') }).status -eq 'error') 'Azure CLI cannot be used to bypass session authentication.'
