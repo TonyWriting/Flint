@@ -86,8 +86,8 @@ function Get-FlintSignInArguments {
     foreach ($argument in $Arguments) { if ($argument -ceq '--') { break }; $local += $argument }
     $signIn = @('version')
     foreach ($option in @('--kubeconfig', '--context', '--cluster', '--user')) {
-        $value = $null
-        try { $value = Get-FlintKubectlOption $local $option } catch { }
+        # A repeated or malformed option throws: signing in to a guessed user could pick the wrong credentials.
+        $value = Get-FlintKubectlOption $local $option
         if ($value) { $signIn += ($option + '=' + $value) }
     }
     return $signIn
@@ -123,7 +123,11 @@ function Invoke-FlintCommand {
     $arguments = @(foreach ($value in $ToolArguments.arguments) { ConvertTo-FlintNativeArgument $value })
     # Credential plugins can ask for a device-code sign-in on stderr and then wait for it. Nobody sees a hidden
     # process, so stop at that prompt and let the parent offer the sign-in in the terminal.
-    $signInPrompt = '(?i)\bopen the page\s+https://\S+\s+and enter the code\s+\S+'
+    # A program running inside a pod can print the same prompt for its own sign-in, so those commands are not watched.
+    $signInPrompt = ''
+    if ($ToolArguments.arguments[0] -cnotin @('exec', 'attach', 'run', 'debug') -and @($ToolArguments.arguments) -cnotcontains '--') {
+        $signInPrompt = '(?i)\bopen the page\s+https://\S+\s+and enter the code\s+\S+'
+    }
     $native = Invoke-FlintProcess -FilePath $program.path -ArgumentList $arguments -TimeoutSec $TimeoutSec -WorkingDirectory $Root -PromptPattern $signInPrompt
     if ($native.status -eq 'prompted') {
         $result = @{

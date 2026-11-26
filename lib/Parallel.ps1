@@ -98,7 +98,9 @@ function Invoke-FlintParallelTools {
                 try {
                     if (-not $state.result -and $state.worker -and (Test-FlintProcess $state.worker.process)) {
                         try { $state.result = Complete-FlintWorker $state.worker } finally { $state.worker = $null }
-                        if ($state.call.name -ceq 'run_command' -and $state.result.status -eq 'sign_in_required' -and -not $state.signed_in_retry) { $state.awaiting_sign_in = $true }
+                        if ($state.call.name -ceq 'run_command' -and $state.result.status -eq 'sign_in_required') {
+                            if ($state.signed_in_retry) { $state.result.output = Get-FlintRepeatedSignInOutput } else { $state.awaiting_sign_in = $true }
+                        }
                         if ($state.plan.service) { $state.result = Complete-FlintAzureResult $Session $state.result $state.plan.service }
                         if ($state.result.status -eq 'error' -and $state.result.retryable -and $state.attempt -lt 3) {
                             $delay = @(1, 2, 4)[$state.attempt]

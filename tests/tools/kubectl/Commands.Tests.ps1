@@ -25,10 +25,24 @@ class Recorder {
         if (args.Length > 0 && args[0] == "empty") return 0;
         if (args.Length > 0 && args[0] == "sleep") Thread.Sleep(30000);
         if (Array.Exists(args, a => a.Contains("slow-pod"))) Thread.Sleep(3000);
-        if (Array.Exists(args, a => a.Contains("signin-cluster") || a.Contains("flaky-cluster"))) {
+        if (args.Length > 0 && args[0] == "exec") {
+            // A program inside the pod prints its own device-code prompt; kubectl itself is signed in.
+            Console.Error.WriteLine("To sign in, use a web browser to open the page https://login.example.com/device and enter the code REMOTE42 to authenticate.");
+            Console.Error.Flush();
+            Thread.Sleep(2000);
+            Console.Write("remote output");
+            return 0;
+        }
+        if (Array.Exists(args, a => a.Contains("signin-cluster") || a.Contains("flaky-cluster") || a.Contains("partial-cluster"))) {
             // Mimic a credential plugin: print a device-code prompt and wait, until a sign-in leaves a cached marker.
             string marker = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "signed-in.marker");
-            if (args[0] == "version") { System.IO.File.WriteAllText(marker, "signed in"); Console.Error.WriteLine("Fixture sign-in complete."); return 0; }
+            if (args[0] == "version") {
+                System.IO.File.WriteAllText(marker, "signed in");
+                // The partial cluster signs in but cannot reach its API server, so version fails.
+                if (Array.Exists(args, a => a.Contains("partial-cluster"))) { Console.Error.WriteLine("Unable to connect to the server."); return 1; }
+                Console.Error.WriteLine("Fixture sign-in complete.");
+                return 0;
+            }
             if (!System.IO.File.Exists(marker)) {
                 Console.Error.WriteLine("To sign in, use a web browser to open the page https://login.example.com/device and enter the code FIXTURE42 to authenticate.");
                 Console.Error.Flush();
@@ -164,22 +178,38 @@ class Recorder {
     $script:SignInAnswers = 0
     $Session.StopRequested = $true
     $stopped = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'after-stop'); program = @{ path = 'unused.exe' } }
-    Assert-True (-not (Invoke-FlintCommandSignIn $Session $stopped ([datetime]::UtcNow) 'after-stop') -and $script:SignInAnswers -eq 0) 'Offer no sign-in after the user stopped the turn.'
+    Assert-True ((Invoke-FlintCommandSignIn $Session $stopped ([datetime]::UtcNow) 'after-stop').outcome -eq 'cancelled' -and $script:SignInAnswers -eq 0) 'Offer no sign-in after the user stopped the turn.'
     $Session.StopRequested = $false
     # Arguments after -- belong to the command inside the pod, so they never choose kubectl credentials.
     $exec = @('exec', 'demo', '--context=prod', '--', 'app', '--kubeconfig=remote.yaml', '--context=inner')
     Assert-True ((@(Get-FlintSignInArguments $exec) -join ' ') -ceq 'version --context=prod') 'Take credential options only from kubectl arguments.'
     $noisy = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'noisy-cluster', '--namespace', 'team') }
-    Assert-True ($noisy.status -eq 'sign_in_required' -and $noisy.duration_ms -lt 15000 -and $noisy.output.Contains('not a network or cluster failure')) ('Find a prompt after long stderr diagnostics, and report a failed sign-in. ' + $noisy.output)
+    Assert-True ($noisy.status -eq 'sign_in_required' -and $noisy.duration_ms -lt 20000 -and $noisy.output.Contains('again after the sign-in attempt')) ('Find a prompt after long stderr diagnostics, and report a sign-in that did not take effect. ' + $noisy.output)
     # Context names are case-sensitive, so a sign-in for one context never stands in for another.
     $script:SignInAnswers = 0
     function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; return 'n' }
-    $Session.CommandSignIns = @(@{ key = '--context=Prod'; completed = [datetime]::UtcNow.AddMinutes(1); signed_in = $true })
+    $Session.CommandSignIns = @(@{ key = '--context=Prod'; completed = [datetime]::UtcNow.AddMinutes(1); outcome = @{ outcome = 'signed_in' } })
     $before = [datetime]::UtcNow
     $other = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'prod'); program = @{ path = 'unused.exe' } }
     $same = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'Prod'); program = @{ path = 'unused.exe' } }
-    Assert-True (-not (Invoke-FlintCommandSignIn $Session $other $before 'case-other') -and $script:SignInAnswers -eq 1) 'Ask again for a context that differs only in case.'
-    Assert-True ((Invoke-FlintCommandSignIn $Session $same $before 'case-same') -and $script:SignInAnswers -eq 1) 'Reuse a sign-in for the same context.'
+    Assert-True ((Invoke-FlintCommandSignIn $Session $other $before 'case-other').outcome -eq 'declined' -and $script:SignInAnswers -eq 1) 'Ask again for a context that differs only in case.'
+    Assert-True ((Invoke-FlintCommandSignIn $Session $same $before 'case-same').outcome -eq 'signed_in' -and $script:SignInAnswers -eq 1) 'Reuse a sign-in for the same context.'
+    # Repeated credential options are ambiguous, so no sign-in is guessed for them.
+    $ambiguous = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'a', '--context', 'b'); program = @{ path = 'unused.exe' } }
+    $outcome = Invoke-FlintCommandSignIn $Session $ambiguous ([datetime]::UtcNow) 'ambiguous'
+    Assert-True ($outcome.outcome -eq 'failed' -and $outcome.failure.Contains('Duplicate') -and $script:SignInAnswers -eq 1) 'Offer no sign-in when the credential options are ambiguous.'
+    # A sign-in that cannot start ends only that call, so a parallel batch keeps going.
+    function Read-FlintSignInApproval { param($Session, $Arguments); return 'y' }
+    $missing = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'missing'); program = @{ path = (Join-Path $TestRoot 'missing-kubectl.exe') } }
+    $outcome = Invoke-FlintCommandSignIn $Session $missing ([datetime]::UtcNow) 'missing'
+    Assert-True ($outcome.outcome -eq 'failed' -and $outcome.failure.Contains('could not start')) 'Report a sign-in that cannot start instead of throwing.'
+    # A sign-in that exits with an error can still have signed in, so a read runs again and shows the real state.
+    $partial = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'partial-cluster', '--namespace', 'team') }
+    Assert-True ($partial.status -eq 'ok' -and $partial.output.Contains('partial-cluster')) ('Run a read again after a sign-in that exited with an error. ' + $partial.output)
+    Remove-Item -LiteralPath $marker -Force
+    # A device-code prompt from a program inside the pod is that program's output, not a kubectl sign-in.
+    $remote = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('exec', 'demo', '--context', 'cc-test', '--namespace', 'team', '--', 'az', 'login') }
+    Assert-True ($remote.status -eq 'ok' -and $remote.output.Contains('remote output') -and $remote.output.Contains('REMOTE42')) ('Do not treat a prompt from inside the pod as a kubectl sign-in. ' + $remote.output)
     # Stop kubectl before the worker deadline so its own output explains the timeout.
     $Session.ToolTimeoutSec = 10
     $hung = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('hang') }
