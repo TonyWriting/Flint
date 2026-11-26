@@ -66,9 +66,11 @@ try {
     Assert-True (-not (Get-Process -Id $childId -ErrorAction SilentlyContinue)) 'Terminate the timed-out process.'
     # A process that keeps writing must stop at the output cap, not at its time budget.
     # Large writes reach the 1 MiB cap in a few iterations, even on a slow shared runner.
+    # Completion also reports output_limit for a capture above 1 MiB, so only the duration shows that the cap,
+    # not the budget, stopped this process.
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value "while (`$true) { Write-Output ('x' * 65536) }"
     $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) $outputLimitTimeout $WorkRoot
-    Assert-True ($result.status -eq 'output_limit') ('Cap native output independently of the tool timeout.' + (Format-TestResult $result))
+    Assert-True ($result.status -eq 'output_limit' -and $result.duration_ms -lt ($outputLimitTimeout * 1000)) ('Cap native output independently of the tool timeout.' + (Format-TestResult $result))
 
     # Use a harness-owned fixture as the worker to verify timeout behavior at the tool boundary.
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value 'param($RequestPath); Start-Sleep -Seconds 60'
