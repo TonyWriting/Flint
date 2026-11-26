@@ -17,6 +17,60 @@ function Complete-FlintToolResult {
     return $result
 }
 
+function Invoke-FlintCommandSignIn {
+    param([hashtable]$Session, $Invocation, [datetime]$CallStarted, [string]$CallId)
+    # Returns whether kubectl has signed in since this call started, so the call can run again.
+    $signIn = @(Get-FlintSignInArguments @($Invocation.arguments))
+    $key = ($signIn | Select-Object -Skip 1) -join ' '
+    # Parallel calls hit the same prompt; one answer covers every call that started before it.
+    $previous = $Session.CommandSignIns[$key]
+    if ($previous -and $previous.completed -gt $CallStarted) { return [bool]$previous.signed_in }
+    $answer = Read-FlintSignInApproval $Session $signIn
+    $approved = $null -ne $answer -and $answer.Trim() -ceq 'y'
+    $signedIn = $false; $exitCode = $null; $started = [datetime]::UtcNow
+    if ($approved) {
+        Write-Host 'Follow the sign-in instructions below. Press s to cancel.' -ForegroundColor Yellow
+        $outputPath = Join-Path $env:TEMP ('flint-sign-in-' + [guid]::NewGuid().ToString('N') + '.txt')
+        $arguments = @(foreach ($value in $signIn) { ConvertTo-FlintNativeArgument $value })
+        # No window and no stderr redirection: the plugin prints its sign-in instructions in this terminal.
+        $state = @{ process = $null }
+        try {
+            $state.process = Start-Process -FilePath $Invocation.program.path -ArgumentList $arguments -WorkingDirectory $Session.Root `
+                -NoNewWindow -PassThru -RedirectStandardOutput $outputPath -ErrorAction Stop
+            $null = $state.process.Handle
+            # Device codes expire after about 15 minutes.
+            $deadline = [datetime]::UtcNow.AddMinutes(15)
+            while (-not $state.process.HasExited -and [datetime]::UtcNow -lt $deadline) {
+                if (Test-FlintStopKey $Session) { break }
+                Start-Sleep -Milliseconds 200
+            }
+            if ($state.process.HasExited) { $exitCode = $state.process.ExitCode; $signedIn = $exitCode -eq 0 }
+        } finally {
+            Stop-FlintProcess $state
+            Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
+        }
+        if ($signedIn) { Write-Host 'Signed in. Running the command again.' -ForegroundColor Green }
+        else { Write-Host 'Sign-in did not complete.' -ForegroundColor Yellow }
+    }
+    $Session.CommandSignIns[$key] = @{ completed = [datetime]::UtcNow; signed_in = $signedIn }
+    Write-FlintEvent $Session 'command_sign_in' @{
+        call_id = $CallId; arguments = $signIn; approved = $approved; signed_in = $signedIn; exit_code = $exitCode; duration_ms = Get-FlintElapsedMs $started
+    }
+    return $signedIn
+}
+
+function Resolve-FlintCommandSignIn {
+    param([hashtable]$Session, $Invocation, [bool]$ReadOnly, [datetime]$CallStarted, [string]$CallId, $Result)
+    # Returns whether to run the call again; otherwise explains the outcome to the model in the result.
+    if (Invoke-FlintCommandSignIn $Session $Invocation $CallStarted $CallId) {
+        if ($ReadOnly) { return $true }
+        $Result.output = 'kubectl stopped at a sign-in prompt before it had credentials, and the user has now signed in. The change was most likely not sent: read the actual state, then submit the same command again if it is still needed.'
+        return $false
+    }
+    $Result.output = 'kubectl stopped at an interactive sign-in prompt from its kubeconfig credential plugin, and sign-in was not completed. This is not a network or cluster failure. Ask the user to sign in, for example by running the kubectl command once in a terminal, then retry.'
+    return $false
+}
+
 function Invoke-AgentTool {
     param([hashtable]$Session, [string]$Name, [string]$Arguments, [string]$CallId)
     $started = [datetime]::UtcNow
@@ -77,6 +131,12 @@ function Invoke-AgentTool {
             if (($deadline - [datetime]::UtcNow).TotalSeconds -le $delay) { break }
             Write-FlintEvent $Session 'tool_retry' @{ call_id = $CallId; attempt = $attempt + 2; delay_seconds = $delay; result = $result }
             if (-not (Wait-FlintRetry $Session $delay $deadline ('Retrying command ({0}/3) in {1}s' -f ($attempt + 1), $delay))) { break }
+        }
+        if ($Name -ceq 'run_command' -and $result.status -eq 'sign_in_required' -and
+            (Resolve-FlintCommandSignIn $Session $invocation ([bool]$permission.read_only) $started $CallId $result)) {
+            # Signing in waited for the user, so the command gets a fresh time budget.
+            Show-FlintActivity $Session (Get-FlintToolLabel $Name $parsed)
+            $result = Invoke-FlintWorker $Session $Name $parsed -TimeoutSec $Session.ToolTimeoutSec -CommandInvocation $invocation
         }
     } catch {
         if ($Session.LogFailed) { throw }

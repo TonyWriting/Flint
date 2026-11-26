@@ -98,8 +98,14 @@ function Invoke-FlintParallelTools {
                 try {
                     if (-not $state.result -and $state.worker -and (Test-FlintProcess $state.worker.process)) {
                         try { $state.result = Complete-FlintWorker $state.worker } finally { $state.worker = $null }
-                        if ($state.plan.service) { $state.result = Complete-FlintAzureResult $Session $state.result $state.plan.service }
-                        if ($state.result.status -eq 'error' -and $state.result.retryable -and $state.attempt -lt 3) {
+                        if ($state.call.name -ceq 'run_command' -and $state.result.status -eq 'sign_in_required' -and -not $state.signed_in_retry -and
+                            (Resolve-FlintCommandSignIn $Session $state.plan.invocation $true $state.started $state.call.call_id $state.result)) {
+                            # Run it again with a fresh budget, since signing in waited for the user.
+                            $state.signed_in_retry = $true; $state.result = $null
+                            $state.deadline = [datetime]::UtcNow.AddSeconds($Session.ToolTimeoutSec); $state.next_attempt = [datetime]::UtcNow
+                        }
+                        if ($state.plan.service -and $state.result) { $state.result = Complete-FlintAzureResult $Session $state.result $state.plan.service }
+                        if ($state.result -and $state.result.status -eq 'error' -and $state.result.retryable -and $state.attempt -lt 3) {
                             $delay = @(1, 2, 4)[$state.attempt]
                             if ($null -ne $state.result.retry_after_seconds -and $state.result.retry_after_seconds -gt $delay) { $delay = $state.result.retry_after_seconds }
                             if (($state.deadline - [datetime]::UtcNow).TotalSeconds -gt $delay) {

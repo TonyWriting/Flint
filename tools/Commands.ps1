@@ -78,6 +78,18 @@ function Assert-FlintKubectlMutation {
     }
 }
 
+function Get-FlintSignInArguments {
+    param([string[]]$Arguments)
+    # A harmless read with the same credential options signs in the kubeconfig user the command needs.
+    $signIn = @('version')
+    foreach ($option in @('--kubeconfig', '--context', '--cluster', '--user')) {
+        $value = $null
+        try { $value = Get-FlintKubectlOption $Arguments $option } catch { }
+        if ($value) { $signIn += ($option + '=' + $value) }
+    }
+    return $signIn
+}
+
 function New-FlintCommandInvocation {
     param([hashtable]$Session, $ToolArguments)
     Assert-FlintKubectlMutation $ToolArguments.arguments @($Session.GuardedPatchResources)
@@ -106,7 +118,18 @@ function Invoke-FlintCommand {
         throw 'The command executable changed after authorization. Submit the command again.'
     }
     $arguments = @(foreach ($value in $ToolArguments.arguments) { ConvertTo-FlintNativeArgument $value })
-    $native = Invoke-FlintProcess -FilePath $program.path -ArgumentList $arguments -TimeoutSec $TimeoutSec -WorkingDirectory $Root
+    # Credential plugins can ask for a device-code sign-in on stderr and then wait for it. Nobody sees a hidden
+    # process, so stop at that prompt and let the parent offer the sign-in in the terminal.
+    $signInPrompt = '(?i)\bopen the page\s+https://\S+\s+and enter the code\s+\S+'
+    $native = Invoke-FlintProcess -FilePath $program.path -ArgumentList $arguments -TimeoutSec $TimeoutSec -WorkingDirectory $Root -PromptPattern $signInPrompt
+    if ($native.status -eq 'prompted') {
+        $result = @{
+            status = 'sign_in_required'; exit_code = $null; retryable = $false; duration_ms = $native.duration_ms
+            output = 'kubectl stopped at an interactive sign-in prompt from its kubeconfig credential plugin while waiting for credentials.'
+        }
+        if (Test-FlintKubectlMutation $ToolArguments.arguments) { $result.verification_required = $true; $result.outcome_unknown = $true }
+        return $result
+    }
     $output = (@($native.stdout.TrimEnd("`r", "`n"), $native.stderr.TrimEnd("`r", "`n")) | Where-Object { $_ -ne '' }) -join [Environment]::NewLine
     $retryable = $native.status -eq 'error' -and $output -match '(?i)connection reset|temporarily unavailable|ServiceUnavailable|TLS handshake timeout|i/o timeout|TooManyRequests'
     $result = @{ status = $native.status; exit_code = $native.exit_code; output = $output; retryable = [bool]$retryable; duration_ms = $native.duration_ms }

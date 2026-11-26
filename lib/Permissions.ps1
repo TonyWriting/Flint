@@ -194,6 +194,18 @@ function Read-FlintCommandApproval {
     try { return Read-Host 'y/n (default n)' } catch { return $null }
 }
 
+function Read-FlintSignInApproval {
+    param([hashtable]$Session, [string[]]$Arguments)
+    Initialize-FlintUi $Session
+    if (-not $Session.Ui.Live) { return $null }
+    Clear-FlintProgress $Session
+    Write-Host ''
+    Write-Host 'kubectl needs you to sign in: its kubeconfig credential plugin asked for an interactive sign-in.' -ForegroundColor Yellow
+    Write-Host (Protect-FlintText $Session ('Sign-in command: kubectl ' + ($Arguments -join ' '))) -ForegroundColor Yellow
+    Write-Host 'Sign in now in this terminal? The plugin keeps the sign-in until it expires.' -ForegroundColor Yellow
+    try { return Read-Host 'y/n (default n)' } catch { return $null }
+}
+
 function Resolve-FlintCommandPermission {
     param([hashtable]$Session, $Invocation, [string]$CallId, [string]$Purpose)
     $ruleSource = Get-FlintReadOnlyRuleSource $Session $Invocation

@@ -18,13 +18,14 @@ function Wait-FlintRetry {
 }
 
 function Start-FlintProcess {
-    param([string]$FilePath, [string[]]$ArgumentList, [double]$TimeoutSec, [string]$WorkingDirectory, [hashtable]$Session, [string]$ModelApiKey, [string]$AzureAccessToken)
+    param([string]$FilePath, [string[]]$ArgumentList, [double]$TimeoutSec, [string]$WorkingDirectory, [hashtable]$Session, [string]$ModelApiKey, [string]$AzureAccessToken, [string]$PromptPattern)
     $scratch = Join-Path $env:TEMP ('flint-process-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $scratch -ErrorAction Stop | Out-Null
     $stdoutPath = Join-Path $scratch 'stdout.txt'
     $stderrPath = Join-Path $scratch 'stderr.txt'
     $state = @{ process = $null; scratch = $scratch; stdout_path = $stdoutPath; stderr_path = $stderrPath
-        started = [datetime]::UtcNow; timeout_sec = $TimeoutSec; status = 'ok'; exit_code = $null; result = $null }
+        started = [datetime]::UtcNow; timeout_sec = $TimeoutSec; status = 'ok'; exit_code = $null; result = $null
+        prompt_pattern = $PromptPattern; stderr_checked = 0L }
     $ready = $false
     try {
         $passModelKey = 'ModelApiKey' -in $PSBoundParameters.Keys
@@ -63,6 +64,16 @@ function Test-FlintProcess {
         if ((Test-FlintStopKey $Session) -and -not $Session.StopDeferred) { $State.status = 'stopped'; return $true }
     }
     if ((Get-FlintElapsedMs $State.started) -ge ($State.timeout_sec * 1000)) { $State.status = 'timeout'; return $true }
+    if ($State.prompt_pattern -and (Test-Path -LiteralPath $State.stderr_path)) {
+        # A hidden process cannot answer a prompt; stop at the prompt instead of waiting for the timeout.
+        $length = (Get-Item -LiteralPath $State.stderr_path).Length
+        if ($length -ne $State.stderr_checked -and $length -le 65536) {
+            $State.stderr_checked = $length
+            $text = ''
+            try { $text = [string](Get-Content -LiteralPath $State.stderr_path -Raw -Encoding UTF8 -ErrorAction Stop) } catch { }
+            if ($text -match $State.prompt_pattern) { $State.status = 'prompted'; return $true }
+        }
+    }
     $bytes = 0L
     foreach ($capture in @($State.stdout_path, $State.stderr_path)) {
         if (Test-Path -LiteralPath $capture) { $bytes += (Get-Item -LiteralPath $capture).Length }
@@ -122,7 +133,7 @@ function Complete-FlintProcess {
 }
 
 function Invoke-FlintProcess {
-    param([string]$FilePath, [string[]]$ArgumentList, [double]$TimeoutSec, [string]$WorkingDirectory, [hashtable]$Session, [string]$ModelApiKey, [string]$AzureAccessToken)
+    param([string]$FilePath, [string[]]$ArgumentList, [double]$TimeoutSec, [string]$WorkingDirectory, [hashtable]$Session, [string]$ModelApiKey, [string]$AzureAccessToken, [string]$PromptPattern)
     $state = $null; $result = $null
     try {
         $state = Start-FlintProcess @PSBoundParameters
