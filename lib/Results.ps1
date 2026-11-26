@@ -51,8 +51,11 @@ function Save-FlintResult {
         $safe = Protect-FlintValue $Session $decoded -Untrusted
         $text = ConvertTo-Json -InputObject $safe -Depth 100
         # kubectl prints indented JSON. When redaction changes nothing, its own text is saved, so the preview,
-        # searches and line numbers match what kubectl printed.
-        if ($Kubernetes -and (ConvertTo-Json -InputObject $safe -Depth 100 -Compress) -ceq (ConvertTo-Json -InputObject $decoded -Depth 100 -Compress)) { $text = $Content }
+        # searches and line numbers match what kubectl printed. Text with duplicate keys is never reused.
+        if ($Kubernetes) {
+            $decodedJson = ConvertTo-Json -InputObject $decoded -Depth 100 -Compress
+            if ((ConvertTo-Json -InputObject $safe -Depth 100 -Compress) -ceq $decodedJson -and (Test-FlintJsonKeysKept $Content $decodedJson)) { $text = $Content }
+        }
         if ($safe -is [array]) { $itemCount = $safe.Count }
         elseif ($safe.value -is [array]) { $itemCount = $safe.value.Count }
         if ($safe -isnot [array] -and $safe.nextLink -is [string] -and $safe.nextLink.Length -le 8192) { $nextLink = $safe.nextLink }

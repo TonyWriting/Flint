@@ -22,6 +22,14 @@ function Test-FlintSecretInJson {
     return $false
 }
 
+function Test-FlintJsonKeysKept {
+    param([AllowEmptyString()][string]$Text, [AllowEmptyString()][string]$Decoded)
+    # ConvertFrom-Json keeps only the last of duplicate keys, so text that spells out more keys than its compact
+    # decoded form holds values redaction never saw. Each colon outside a string literal follows one key.
+    $literal = '"(?>(?:[^"\\]|\\.)*)"'
+    return (($Text -replace $literal, '') -split ':').Count -eq (($Decoded -replace $literal, '') -split ':').Count
+}
+
 function Get-FlintJsonStrings {
     param($Value)
     # Every string value and property name of decoded JSON: the text a tool actually receives.
@@ -82,7 +90,7 @@ function Protect-FlintValue {
                 }
                 $originalJson = ConvertTo-Json -InputObject $decoded -Depth 64 -Compress
                 $safeJson = ConvertTo-Json -InputObject (Protect-FlintValue $Session $decoded -Untrusted -Secrets $Secrets) -Depth 64 -Compress
-                if ($originalJson -ceq $safeJson) { return $Value }
+                if ($originalJson -ceq $safeJson -and (Test-FlintJsonKeysKept $Value $originalJson)) { return $Value }
                 return $safeJson
             } catch { }
         }
