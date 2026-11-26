@@ -138,6 +138,8 @@ class Recorder {
     Assert-True (-not ([string](Protect-FlintValue $null '{"password":"private-dup-value","password":"[redacted]"}')).Contains('private-dup-value')) 'Never return JSON text whose duplicate keys hide a value from redaction.'
     # One pass must be enough: a terminal sequence removed from a field name must not hide a credential field.
     Assert-True (-not ([string](Protect-FlintValue $null '{"pass\u001b[0mword":"private-ansi-value"}')).Contains('private-ansi-value')) 'Redact a credential field whose name hides behind a terminal sequence.'
+    $split = '{"note":"' + $Session.ApiKey.Substring(0, 4) + '\u001b[0m' + $Session.ApiKey.Substring(4) + '"}'
+    Assert-True ($Session.ApiKey.Length -gt 4 -and -not ([string](Protect-FlintValue $Session $split)).Contains($Session.ApiKey)) 'Redact Flint''s credential when a terminal sequence splits it.'
     $patch = '[{"op":"test","path":"/metadata/resourceVersion","value":"15"},{"op":"replace","path":"/spec/workload/0/manifest/spec/replicas","value":6}]'
     $result = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('patch', 'deployments', 'demo', '--context', 'cc-test', '--namespace', 'team', '--type=json', '--patch', $patch) }
     Assert-True ($result.status -eq 'ok' -and $result.verification_required -and -not $result.outcome_unknown) 'Require state verification after a successful scoped mutation.'

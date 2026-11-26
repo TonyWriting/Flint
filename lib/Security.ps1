@@ -64,6 +64,8 @@ function Protect-FlintText {
     $Text = $Text -replace '\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', ''
     $Text = $Text -replace '\x1b\[[0-?]*[ -/]*[@-~]', ''
     $Text = $Text -replace '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', ''
+    # A credential split by control sequences is whole again once they are removed.
+    foreach ($secret in $Secrets) { $Text = $Text.Replace($secret, '[redacted]') }
     $Text = $Text -replace '(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----', '[redacted private key]'
     $Text = $Text -replace '(?i)\b(Bearer|Basic)\s+[A-Za-z0-9+/_.=~%-]+', '$1 [redacted]'
     $Text = $Text -replace '(?i)(https?://)[^\s/@]+:[^\s/@]+@', '$1[redacted]@'
