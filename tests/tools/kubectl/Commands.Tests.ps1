@@ -24,7 +24,6 @@ class Recorder {
         if (args.Length > 0 && args[0] == "fail") { Console.Write("partial"); Console.Error.Write("failure"); return 7; }
         if (args.Length > 0 && args[0] == "empty") return 0;
         if (args.Length > 0 && args[0] == "sleep") Thread.Sleep(30000);
-        if (Array.Exists(args, a => a.Contains("slow-pod"))) Thread.Sleep(3000);
         if (args.Length > 0 && args[0] == "exec") {
             // A program inside the pod prints its own device-code prompt; kubectl itself is signed in.
             Console.Error.WriteLine("To sign in, use a web browser to open the page https://login.example.com/device and enter the code REMOTE42 to authenticate.");
@@ -130,8 +129,7 @@ class Recorder {
     $read = @('get', 'pods', '--context', 'signin-cluster', '--namespace', 'team')
     $prompted = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = $read }
     Assert-True ($prompted.status -eq 'sign_in_required' -and $prompted.duration_ms -lt 15000 -and $prompted.output.Contains('not a network or cluster failure')) ('Stop at a sign-in prompt and explain it without a terminal. ' + $prompted.output)
-    $events = @(Get-TestSignIns)
-    Assert-True ($events.Count -eq 1 -and -not $events[0].data.approved -and -not (Test-Path -LiteralPath $marker)) 'Never sign in without an answer from the user.'
+    Assert-True (@(Get-TestSignIns).Count -eq 1 -and -not @(Get-TestSignIns)[0].data.finished -and -not (Test-Path -LiteralPath $marker)) 'Never sign in without an answer from the user.'
     # The approval file stands for the user completing the sign-in in a browser.
     $script:SignInAnswers = 0; $script:SignInArguments = @()
     function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; $script:SignInArguments = $Arguments; Set-Content -LiteralPath $approval -Value 'y'; return 'y' }
@@ -139,7 +137,7 @@ class Recorder {
     $savedKey = $env:FLINT_MODEL_API_KEY; $env:FLINT_MODEL_API_KEY = 'must-not-reach-sign-in'
     try { $signedIn = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = $read } } finally { $env:FLINT_MODEL_API_KEY = $savedKey }
     Assert-True ($signedIn.status -eq 'ok' -and $signedIn.output.Contains('signin-cluster') -and $script:SignInAnswers -eq 1) ('Sign in when the user agrees, then run the read again. ' + $signedIn.output)
-    Assert-True ((Get-TestSignIns)[-1].data.outcome -eq 'signed_in') 'Run the sign-in without Flint''s own credentials.'
+    Assert-True (@(Get-TestSignIns)[-1].data.exit_code -eq 0) 'Run the sign-in without Flint''s own credentials.'
     Assert-True (($script:SignInArguments -join ' ') -ceq ($read -join ' ')) 'Sign in with the original read, so kubectl itself chooses the credentials.'
     Reset-TestSignIn
     # A read that signs in starts over with the normal retries for transient errors.
@@ -147,76 +145,29 @@ class Recorder {
     $retries = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'tool_retry' })
     Assert-True ($flaky.status -eq 'ok' -and $flaky.output.Contains('flaky-cluster') -and $retries.Count -eq 1) ('Retry a transient error after signing in. ' + $flaky.output)
     Reset-TestSignIn
+    # A sign-in read that exits with an error can still have signed in, so the read runs again and shows the real state.
+    $partial = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'partial-cluster', '--namespace', 'team') }
+    Assert-True ($partial.status -eq 'ok' -and $partial.output.Contains('partial-cluster') -and @(Get-TestSignIns)[-1].data.exit_code -eq 1) ('Run a read again after a sign-in that exited with an error. ' + $partial.output)
+    Reset-TestSignIn
+    $noisy = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'noisy-cluster', '--namespace', 'team') }
+    Assert-True ($noisy.status -eq 'sign_in_required' -and $noisy.duration_ms -lt 20000 -and $noisy.output.Contains('did not take effect')) ('Find a prompt after long stderr diagnostics, and report a sign-in that did not take effect. ' + $noisy.output)
+    Reset-TestSignIn
     # Signing in by running a change again would change twice, so a change asks for a read first.
     $asked = $script:SignInAnswers
     $change = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('scale', 'deployments', 'demo', '--replicas=2', '--context', 'signin-cluster', '--namespace', 'team') }
     Assert-True ($change.status -eq 'sign_in_required' -and $change.outcome_unknown -and $change.output.Contains('Read the actual state first') -and $script:SignInAnswers -eq $asked -and -not (Test-Path -LiteralPath $marker)) ('Never repeat a change to sign in. ' + $change.output)
     Reset-TestSignIn
-    # Parallel reads waiting on the same sign-in ask once, after every other call has finished, then all run again.
-    $script:SignInAnswers = 0; $script:SiblingDoneAtSignIn = $null
-    function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; $script:SiblingDoneAtSignIn = $completed.ContainsKey('slow-sibling'); Set-Content -LiteralPath $approval -Value 'y'; return 'y' }
+    # Parallel reads only report the prompt; the model runs one again on its own to get the sign-in.
     $calls = @(
         @{ type = 'function_call'; call_id = 'signin-a'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'a', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read pod a.' }) },
-        @{ type = 'function_call'; call_id = 'signin-b'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'b', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read pod b.' }) },
-        @{ type = 'function_call'; call_id = 'slow-sibling'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'slow-pod', '--context', 'cc-test', '--namespace', 'team'); purpose = 'Read a slow pod.' }) }
+        @{ type = 'function_call'; call_id = 'signin-b'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'b', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read pod b.' }) }
     )
-    Assert-True (@($calls | Where-Object { Get-FlintParallelCall $Session $_ }).Count -eq 3) 'Classify the sign-in reads and their sibling for parallel execution.'
+    Assert-True (@($calls | Where-Object { Get-FlintParallelCall $Session $_ }).Count -eq 2) 'Classify both sign-in reads for parallel execution.'
     $completed = @{}; $progress = @{ tool_count = 0 }
     Invoke-FlintParallelTools $Session $calls $completed $progress
     $outputs = @{}
     foreach ($item in $Session.History) { if ($item.type -eq 'function_call_output') { $outputs[$item.call_id] = ConvertFrom-Json $item.output } }
-    Assert-True ($outputs['signin-a'].status -eq 'ok' -and $outputs['signin-b'].status -eq 'ok' -and $outputs['slow-sibling'].status -eq 'ok' -and $script:SignInAnswers -eq 1) 'Ask once for parallel reads that wait on the same sign-in.'
-    Assert-True ($script:SiblingDoneAtSignIn -eq $true) 'Sign in only after other parallel calls finish, so their deadlines stay enforced.'
-    Reset-TestSignIn
-    # A slow second sign-in, for another context, does not use up the first read's budget.
-    $Session.ToolTimeoutSec = 8; $script:SignInAnswers = 0
-    function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; if ($script:SignInAnswers -eq 2) { Start-Sleep -Seconds 9 }; Set-Content -LiteralPath $approval -Value 'y'; return 'y' }
-    $calls = @(
-        @{ type = 'function_call'; call_id = 'context-a'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read context a.' }) },
-        @{ type = 'function_call'; call_id = 'context-b'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'signin-cluster-b', '--namespace', 'team'); purpose = 'Read context b.' }) }
-    )
-    $completed = @{}; $progress = @{ tool_count = 0 }
-    Invoke-FlintParallelTools $Session $calls $completed $progress
-    $outputs = @{}
-    foreach ($item in $Session.History) { if ($item.type -eq 'function_call_output') { $outputs[$item.call_id] = ConvertFrom-Json $item.output } }
-    Assert-True ($outputs['context-a'].status -eq 'ok' -and $outputs['context-b'].status -eq 'ok' -and $script:SignInAnswers -eq 2) ('Start rerun budgets after every sign-in. ' + $outputs['context-a'].status)
-    $Session.ToolTimeoutSec = 30
-    Reset-TestSignIn
-    # A stop, for example pressed during an earlier sign-in, ends sign-in handling without another prompt.
-    $script:SignInAnswers = 0
-    $Session.StopRequested = $true
-    $stopped = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'after-stop'); program = @{ path = 'unused.exe' } }
-    Assert-True ((Invoke-FlintCommandSignIn $Session $stopped ([datetime]::UtcNow) 'after-stop').outcome -eq 'cancelled' -and $script:SignInAnswers -eq 0) 'Offer no sign-in after the user stopped the turn.'
-    $Session.StopRequested = $false
-    Reset-TestSignIn
-    # Arguments after -- belong to the command inside the pod, so they never group calls by credentials.
-    Assert-True ((Get-FlintCredentialKey @('exec', 'demo', '--context=prod', '--', 'app', '--kubeconfig=remote.yaml', '--context=inner')) -ceq '--context=prod') 'Group calls only by kubectl''s own credential options.'
-    function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; Set-Content -LiteralPath $approval -Value 'y'; return 'y' }
-    $noisy = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'noisy-cluster', '--namespace', 'team') }
-    Assert-True ($noisy.status -eq 'sign_in_required' -and $noisy.duration_ms -lt 20000 -and $noisy.output.Contains('again after the sign-in attempt')) ('Find a prompt after long stderr diagnostics, and report a sign-in that did not take effect. ' + $noisy.output)
-    Reset-TestSignIn
-    # Context names are case-sensitive, so a sign-in for one context never stands in for another.
-    $script:SignInAnswers = 0
-    function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; return 'n' }
-    $Session.CommandSignIns = @(@{ key = '--context=Prod'; completed = [datetime]::UtcNow.AddMinutes(1); outcome = @{ outcome = 'signed_in' } })
-    $before = [datetime]::UtcNow
-    $other = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'prod'); program = @{ path = 'unused.exe' } }
-    $same = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'Prod'); program = @{ path = 'unused.exe' } }
-    Assert-True ((Invoke-FlintCommandSignIn $Session $other $before 'case-other').outcome -eq 'declined' -and $script:SignInAnswers -eq 1) 'Ask again for a context that differs only in case.'
-    Assert-True ((Invoke-FlintCommandSignIn $Session $same $before 'case-same').outcome -eq 'signed_in' -and $script:SignInAnswers -eq 1) 'Reuse a sign-in for the same context.'
-    # Repeated options cannot be grouped safely, so the call gets its own sign-in decision.
-    $ambiguous = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'Prod', '--context', 'b'); program = @{ path = 'unused.exe' } }
-    Assert-True ($null -eq (Get-FlintCredentialKey $ambiguous.arguments)) 'Do not group calls with repeated credential options.'
-    Assert-True ((Invoke-FlintCommandSignIn $Session $ambiguous $before 'ambiguous').outcome -eq 'declined' -and $script:SignInAnswers -eq 2) 'Ask separately when the credential options are ambiguous.'
-    # A sign-in that cannot start ends only that call, so a parallel batch keeps going.
-    function Read-FlintSignInApproval { param($Session, $Arguments); return 'y' }
-    $missing = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'missing'); program = @{ path = (Join-Path $TestRoot 'missing-kubectl.exe') } }
-    $outcome = Invoke-FlintCommandSignIn $Session $missing ([datetime]::UtcNow) 'missing'
-    Assert-True ($outcome.outcome -eq 'failed' -and $outcome.failure.Contains('could not start')) 'Report a sign-in that cannot start instead of throwing.'
-    # A sign-in read that exits with an error can still have signed in, so the read runs again and shows the real state.
-    function Read-FlintSignInApproval { param($Session, $Arguments); Set-Content -LiteralPath $approval -Value 'y'; return 'y' }
-    $partial = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'partial-cluster', '--namespace', 'team') }
-    Assert-True ($partial.status -eq 'ok' -and $partial.output.Contains('partial-cluster') -and (Get-TestSignIns)[-1].data.outcome -eq 'exited') ('Run a read again after a sign-in that exited with an error. ' + $partial.output)
+    Assert-True ($outputs['signin-a'].status -eq 'sign_in_required' -and $outputs['signin-b'].output.Contains('Run this call again on its own') -and $script:SignInAnswers -eq $asked) 'Report a sign-in prompt from parallel reads without asking.'
     Reset-TestSignIn
     # A device-code prompt from a program inside the pod is that program's output, not a kubectl sign-in.
     $remote = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('exec', 'demo', '--context', 'cc-test', '--namespace', 'team', '--', 'az', 'login') }

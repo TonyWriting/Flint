@@ -78,21 +78,6 @@ function Assert-FlintKubectlMutation {
     }
 }
 
-function Get-FlintCredentialKey {
-    param([string[]]$Arguments)
-    # Groups calls that use the same kubeconfig credentials, so one sign-in answer covers them all. Flint does not
-    # know which options take values, so this key only groups calls; the sign-in itself runs the original command.
-    # Arguments after -- belong to a command inside the pod. Repeated options return $null: no grouping.
-    $local = @()
-    foreach ($argument in $Arguments) { if ($argument -ceq '--') { break }; $local += $argument }
-    $options = @()
-    foreach ($option in @('--kubeconfig', '--context', '--cluster', '--user')) {
-        try { $value = Get-FlintKubectlOption $local $option } catch { return $null }
-        if ($value) { $options += ($option + '=' + $value) }
-    }
-    return ($options -join ' ')
-}
-
 function New-FlintCommandInvocation {
     param([hashtable]$Session, $ToolArguments)
     Assert-FlintKubectlMutation $ToolArguments.arguments @($Session.GuardedPatchResources)
@@ -132,7 +117,7 @@ function Invoke-FlintCommand {
     if ($native.status -eq 'prompted') {
         $result = @{
             status = 'sign_in_required'; exit_code = $null; retryable = $false; duration_ms = $native.duration_ms
-            output = 'kubectl stopped at an interactive sign-in prompt from its kubeconfig credential plugin while waiting for credentials.'
+            output = 'kubectl stopped at an interactive sign-in prompt from its kubeconfig credential plugin. This is not a network or cluster failure. Run this call again on its own: Flint then offers the user the sign-in.'
         }
         if (Test-FlintKubectlMutation $ToolArguments.arguments) { $result.verification_required = $true; $result.outcome_unknown = $true }
         return $result
