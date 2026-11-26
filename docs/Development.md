@@ -12,11 +12,13 @@ Flint 由入口脚本、运行机制和模型工具三部分组成。`lib/` 是 
 | `tools/Registry.ps1` | 模型工具的名称、参数 schema、使用说明和参数校验。 |
 | `tools/Files.ps1`、`Reading.ps1`、`Searching.ps1` | 文件操作、分页读取和文本搜索。 |
 | `tools/Commands.ps1`、`tools/permissions/` | kubectl 执行、受保护资源的修改约束，以及标准 Kubernetes 只读规则。 |
-| `tools/azure/` | Azure 认证、授权、ARM 请求和 Key Vault。 |
+| `tools/azure/` | Azure 认证、授权和 ARM 请求。 |
 | `tools/Worker.ps1` | 工具子进程的入口，校验请求后分派到具体工具。 |
 | `tests/` | 离线测试，目录与代码对应。 |
 
 判断代码归属时看它负责什么：Windows 进程参数转义属于 `lib/Runtime.ps1`，Azure token 获取属于 `tools/azure/Auth.ps1`，kubectl 参数约束属于 `tools/Commands.ps1`。工具专用的代码即使被多处调用，也放在对应的工具目录。
+
+`run_command` 按执行器（executor）组织：每次调用写明要运行的程序，只读规则和会话内的批准都按执行器分开保存，这部分在 `lib/Permissions.ps1` 中与具体程序无关。目前唯一的执行器是 kubectl，程序查找、参数约束和登录检测都在 `tools/Commands.ps1` 中按 kubectl 实现，插件清单也只有 `kubectl` 一项。增加执行器时，除了在 `tools/Registry.ps1` 放开 `executor` 的取值，还要为新程序实现这几部分，并提供它自己的只读规则文件。
 
 ## 运行测试
 

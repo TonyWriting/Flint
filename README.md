@@ -73,11 +73,10 @@ powershell.exe -NoProfile -File .\agent.ps1 -NoAzure
 | `write_file` | 新建或覆盖文本文件 |
 | `edit_file` | 替换文件中唯一匹配的一段文本 |
 | `create_directory` | 创建目录 |
-| `run_command` | 执行 `kubectl` 命令 |
+| `run_command` | 执行 `kubectl` 命令；目前只支持 kubectl，不运行其他程序或 shell 命令 |
 | `azure_request` | 调用 Azure Resource Manager REST API |
-| `keyvault_list_secrets` | 列出 Key Vault 中 secret 的名称和元数据，不读取内容 |
 
-读取类操作自动执行：文件读取与搜索、Azure GET、符合规则的 Resource Graph 查询、Key Vault 元数据，以及匹配已审核只读规则的 kubectl 命令。工作目录内的文件写入直接执行；其他修改，包括工作目录外的写入、其余的 kubectl 命令和 Azure 请求，都先展示完整内容，由你回答 `y/n`。凭据文件和 Flint 自身的代码受保护，模型无法改写。
+读取类操作自动执行：文件读取与搜索、Azure GET、符合规则的 Resource Graph 查询，以及匹配已审核只读规则的 kubectl 命令。工作目录内的文件写入直接执行；其他修改，包括工作目录外的写入、其余的 kubectl 命令和 Azure 请求，都先展示完整内容，由你回答 `y/n`。凭据文件和 Flint 自身的代码受保护，模型无法改写。
 
 ## 文档
 

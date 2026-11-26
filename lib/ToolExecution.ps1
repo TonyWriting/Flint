@@ -59,14 +59,10 @@ function Invoke-AgentTool {
         if ($Name -ceq 'run_command') {
             $invocation = New-FlintCommandInvocation $Session $parsed
             $permission = Resolve-FlintCommandPermission $Session $invocation $CallId -Purpose $parsed.purpose
-        } elseif ($Name -cin @('azure_request', 'keyvault_list_secrets')) {
+        } elseif ($Name -ceq 'azure_request') {
             if ($Session.Azure.Status -ne 'ready') {
                 $result = @{ status = $Session.Azure.Status; exit_code = $null; output = $Session.Azure.Message; retryable = $false }
                 $permission = @{ allowed = $false; read_only = $false }
-            } elseif ($Name -ceq 'keyvault_list_secrets') {
-                $invocation = New-FlintKeyVaultInvocation $Session $parsed
-                $permission = @{ allowed = $true; read_only = $true }
-                Write-FlintEvent $Session 'azure_permission' @{ call_id = $CallId; source = 'keyvault_metadata'; invocation = $invocation }
             } else {
                 $invocation = New-FlintAzureInvocation $Session $parsed
                 $permission = Resolve-FlintAzurePermission $Session $invocation $CallId -Purpose $parsed.purpose
@@ -92,8 +88,6 @@ function Invoke-AgentTool {
             Show-FlintActivity $Session (Get-FlintToolLabel $Name $parsed)
             if ($Name -ceq 'azure_request') {
                 $result = Invoke-FlintAzureRequest $Session $parsed $invocation -TimeoutSec $remaining
-            } elseif ($Name -ceq 'keyvault_list_secrets') {
-                $result = Invoke-FlintKeyVaultListSecrets $Session $parsed $invocation -TimeoutSec $remaining
             } else {
                 $result = Invoke-FlintWorker $Session $Name $parsed -TimeoutSec $remaining -CommandInvocation $invocation -WriteDirectory $permission.directory
             }

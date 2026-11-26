@@ -35,7 +35,7 @@ try {
     Assert-True ((@($Session.PluginErrors | Where-Object { $_.name -ceq 'renamed' })[0].message) -like "*must match the plugin name 'other'*") 'Explain a directory and manifest name mismatch.'
     Assert-True ((@($Session.CommandRules.kubectl | Where-Object { $_.source -ceq 'plugin:example' })).Count -eq 2) 'Merge plugin rules with the installation rules.'
     Assert-True ((@($Session.GuardedPatchResources) -join ',') -ceq 'widgets,widgets.example.io') 'Collect guarded resources from loaded plugins only.'
-    Assert-True ((ConvertTo-Json -InputObject $Session.Tools -Depth 16 -Compress) -ceq $baseTools -and $Session.Tools.Count -eq 9) 'Plugins never change tool definitions.'
+    Assert-True ((ConvertTo-Json -InputObject $Session.Tools -Depth 16 -Compress) -ceq $baseTools -and $Session.Tools.Count -eq 8) 'Plugins never change tool definitions.'
     Assert-True ($Session.Instructions.StartsWith($baseInstructions) -and $Session.Instructions.Contains('Installed plugins:') -and
         $Session.Instructions.Contains('- example 1.0.0: Fictional widgets') -and $Session.Instructions.Contains('  Guide: ' + $Session.Plugins[0].guide)) 'Describe installed plugins after the fixed instructions.'
     $events = @(Get-TestEvents)

@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 # Runs every *.Tests.ps1 below this directory in its own Windows PowerShell 5.1 process.
-# -Filter selects suites by relative name, for example 'agent\*' or 'tools\azure\KeyVault'.
+# -Filter selects suites by relative name, for example 'agent\*' or 'tools\azure\Requests'.
 # -Parallel sets how many suites run at once; timing-sensitive suites then run one at a time.
 param([string]$Filter = '*', [ValidateRange(1, 8)][int]$Parallel = 2)
 $ErrorActionPreference = 'Stop'

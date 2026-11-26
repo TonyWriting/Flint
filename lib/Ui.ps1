@@ -61,7 +61,6 @@ function Get-FlintToolLabel {
         'create_directory' { if ($Completed) { return 'Directory ready: ' + $ToolArguments.path }; return 'Creating directory' }
         'run_command' { if ($Completed) { return 'Ran ' + $ToolArguments.executor }; return 'Running ' + $ToolArguments.executor }
         'azure_request' { if ($Completed) { return 'Azure ' + $ToolArguments.method + ' ' + $ToolArguments.path }; return 'Azure ' + $ToolArguments.method }
-        'keyvault_list_secrets' { if ($Completed) { return 'Listed secret metadata in ' + $ToolArguments.vault_name }; return 'Listing Key Vault secret metadata' }
         default { return $Name }
     }
 }

@@ -2,7 +2,7 @@ function Get-FlintSessionSecrets {
     param([hashtable]$Session)
     # Flint knows its own credentials exactly, so matching them never guesses.
     if (-not $Session) { return @() }
-    return @(@($Session.ApiKey, $Session.Azure.AccessToken, $Session.Azure.KeyVault.AccessToken) | Where-Object { $_ })
+    return @(@($Session.ApiKey, $Session.Azure.AccessToken) | Where-Object { $_ })
 }
 
 function Test-FlintSecretInJson {

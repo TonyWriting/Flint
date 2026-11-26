@@ -47,9 +47,7 @@ exit /b 1
     Assert-True ($env:AZURE_CORE_NO_COLOR -ceq 'false') 'Disable CLI colors only during invocation and restore the caller setting.'
     $token = Invoke-FlintAzureCli $Session token
     Assert-True ($token.accessToken -ceq 'private-cli-fixture-token' -and $token.expires_on -eq 4102444800) 'Capture CLI token JSON directly into memory.'
-    Assert-True ($token.resource -ceq 'https://management.azure.com/') 'Request the ARM audience by default.'
-    $keyVaultToken = Invoke-FlintAzureCli $Session token -Service keyvault
-    Assert-True ($keyVaultToken.resource -ceq 'https://vault.azure.net') 'Request the Key Vault audience separately using the same tenant login.'
+    Assert-True ($token.resource -ceq 'https://management.azure.com/') 'Request the ARM audience.'
     Invoke-FlintAzureCli $Session login
     Assert-True ($env:AZURE_CORE_LOGIN_EXPERIENCE_V2 -ceq 'on') 'Restore the subscription-selector setting after tenant login.'
     Assert-True ($env:AZURE_CORE_NO_COLOR -ceq 'false') 'Restore color preferences after a successful login.'

@@ -70,15 +70,11 @@ function Select-FlintAzureProvider {
 }
 
 function Invoke-FlintAzureCli {
-    param([hashtable]$Session, [ValidateSet('account', 'login', 'token')][string]$Operation, [ValidateSet('arm', 'keyvault')][string]$Service = 'arm')
+    param([hashtable]$Session, [ValidateSet('account', 'login', 'token')][string]$Operation)
     $arguments = @()
     switch ($Operation) {
         'account' { $arguments = @('account', 'show') }
-        'token' {
-            $resource = 'https://management.azure.com/'
-            if ($Service -eq 'keyvault') { $resource = 'https://vault.azure.net' }
-            $arguments = @('account', 'get-access-token', '--tenant', $Session.Azure.Tenant, '--resource', $resource)
-        }
+        'token' { $arguments = @('account', 'get-access-token', '--tenant', $Session.Azure.Tenant, '--resource', 'https://management.azure.com/') }
         'login' {
             $arguments = @('login', '--allow-no-subscriptions')
             if ($Session.Azure.Tenant) { $arguments += @('--tenant', $Session.Azure.Tenant) }
@@ -120,7 +116,7 @@ function Invoke-FlintAzureCli {
 }
 
 function Invoke-FlintAzurePowerShell {
-    param([hashtable]$Session, [ValidateSet('account', 'login', 'token')][string]$Operation, [ValidateSet('arm', 'keyvault')][string]$Service = 'arm')
+    param([hashtable]$Session, [ValidateSet('account', 'login', 'token')][string]$Operation)
     # Results use the same shape as Azure CLI JSON so identity and token checks are shared.
     switch ($Operation) {
         'account' {
@@ -131,9 +127,7 @@ function Invoke-FlintAzurePowerShell {
             return @{ user = @{ name = [string]$context.Account.Id; type = $type }; tenantId = [string]$context.Tenant.Id; environmentName = [string]$context.Environment.Name }
         }
         'token' {
-            $resource = 'https://management.azure.com/'
-            if ($Service -eq 'keyvault') { $resource = 'https://vault.azure.net' }
-            $parameters = @{ ResourceUrl = $resource; TenantId = $Session.Azure.Tenant; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
+            $parameters = @{ ResourceUrl = 'https://management.azure.com/'; TenantId = $Session.Azure.Tenant; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
             if ((Get-Command -Name Get-AzAccessToken -ErrorAction Stop).Parameters.Keys -contains 'AsSecureString') { $parameters.AsSecureString = $true }
             $token = $null; $secret = $null
             try {
@@ -168,11 +162,11 @@ function Invoke-FlintAzurePowerShell {
 }
 
 function Invoke-FlintAzureAuth {
-    param([hashtable]$Session, [ValidateSet('account', 'login', 'token')][string]$Operation, [ValidateSet('arm', 'keyvault')][string]$Service = 'arm')
+    param([hashtable]$Session, [ValidateSet('account', 'login', 'token')][string]$Operation)
     # The tenant reaches a command line or cmdlet parameter, so it is checked once here.
     if ($Operation -ne 'account' -and ($Operation -eq 'token' -or $Session.Azure.Tenant)) { Assert-FlintAzureTenant $Session.Azure.Tenant }
-    if ($Session.Azure.Provider -ceq 'powershell') { return Invoke-FlintAzurePowerShell $Session $Operation -Service $Service }
-    return Invoke-FlintAzureCli $Session $Operation -Service $Service
+    if ($Session.Azure.Provider -ceq 'powershell') { return Invoke-FlintAzurePowerShell $Session $Operation }
+    return Invoke-FlintAzureCli $Session $Operation
 }
 
 function Set-FlintAzureIdentity {
@@ -189,17 +183,11 @@ function Set-FlintAzureIdentity {
 }
 
 function Update-FlintAzureToken {
-    param([hashtable]$Session, [ValidateSet('arm', 'keyvault')][string]$Service = 'arm')
-    $state = $Session.Azure
-    if ($Service -eq 'keyvault') {
-        if (-not $Session.Azure.KeyVault) { $Session.Azure.KeyVault = @{ Status = 'unavailable'; AccessToken = $null; ExpiresUtc = $null } }
-        $state = $Session.Azure.KeyVault
-        if ($state.Status -eq 'authentication_required') { throw 'Restart Flint to sign in to Azure for Key Vault authentication.' }
-    }
-    if ($state.AccessToken -and $state.ExpiresUtc -gt ([datetime]::UtcNow).AddMinutes(5)) { return }
+    param([hashtable]$Session)
+    if ($Session.Azure.AccessToken -and $Session.Azure.ExpiresUtc -gt ([datetime]::UtcNow).AddMinutes(5)) { return }
     $provider = Get-FlintAzureProviderName $Session
     Set-FlintAzureIdentity $Session
-    $token = Invoke-FlintAzureAuth $Session token -Service $Service
+    $token = Invoke-FlintAzureAuth $Session token
     try {
         if (-not $token.accessToken -or -not $token.expires_on -or -not $token.tenant) {
             if ($Session.Azure.Provider -ceq 'powershell') { throw 'Azure PowerShell returned an incomplete token. Update the Az.Accounts module.' }
@@ -208,9 +196,8 @@ function Update-FlintAzureToken {
         if ($token.tenant -ine $Session.Azure.Tenant) { throw ('{0} returned a token for a different tenant.' -f $provider) }
         $expiresUtc = ([datetime]'1970-01-01T00:00:00Z').ToUniversalTime().AddSeconds([long]$token.expires_on)
         if ($expiresUtc -le ([datetime]::UtcNow).AddSeconds(30)) { throw ('{0} returned an expired token. Restart Flint to sign in to Azure.' -f $provider) }
-        $state.AccessToken = [string]$token.accessToken
-        $state.ExpiresUtc = $expiresUtc
-        if ($Service -eq 'keyvault') { $state.Status = 'ready' }
+        $Session.Azure.AccessToken = [string]$token.accessToken
+        $Session.Azure.ExpiresUtc = $expiresUtc
     } finally { $token = $null }
 }
 
