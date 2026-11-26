@@ -35,6 +35,15 @@ class Recorder {
                 return 1;
             }
         }
+        if (Array.Exists(args, a => a.Contains("noisy-cluster"))) {
+            // A plugin that prints long diagnostics before its prompt; its sign-in never completes.
+            if (args[0] == "version") return 1;
+            for (int i = 0; i < 100; i++) Console.Error.WriteLine("diagnostic " + new string('d', 800));
+            Console.Error.WriteLine("To sign in, use a web browser to open the page https://login.example.com/device and enter the code NOISY42 to authenticate.");
+            Console.Error.Flush();
+            Thread.Sleep(30000);
+            return 1;
+        }
         if (args.Length > 0 && args[0] == "hang") { Console.Error.WriteLine("Unable to connect to the server: fixture i/o timeout"); Console.Error.Flush(); Thread.Sleep(30000); return 1; }
         if (args.Length > 0 && args[0] == "large") {
             // Bounded lines let redirected readers publish output before EOF.
@@ -99,7 +108,9 @@ class Recorder {
     Assert-True ($events.Count -eq 1 -and -not $events[0].data.approved -and -not (Test-Path -LiteralPath $marker)) 'Never sign in without an answer from the user.'
     $script:SignInAnswers = 0; $script:SignInArguments = @()
     function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; $script:SignInArguments = $Arguments; return 'y' }
-    $signedIn = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = $read }
+    # The fixture exits 98 when it sees this variable, so the sign-in also proves Flint's own credentials stay hidden.
+    $savedKey = $env:FLINT_MODEL_API_KEY; $env:FLINT_MODEL_API_KEY = 'must-not-reach-sign-in'
+    try { $signedIn = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = $read } } finally { $env:FLINT_MODEL_API_KEY = $savedKey }
     Assert-True ($signedIn.status -eq 'ok' -and $signedIn.output.Contains('signin-cluster') -and $script:SignInAnswers -eq 1) ('Sign in when the user agrees, then run the read again. ' + $signedIn.output)
     Assert-True (($script:SignInArguments -join ' ') -ceq 'version --context=signin-cluster') 'Sign in with a harmless read for the same context.'
     Remove-Item -LiteralPath $marker -Force
@@ -119,6 +130,17 @@ class Recorder {
     foreach ($item in $Session.History) { if ($item.type -eq 'function_call_output') { $outputs[$item.call_id] = ConvertFrom-Json $item.output } }
     Assert-True ($outputs['signin-a'].status -eq 'ok' -and $outputs['signin-b'].status -eq 'ok' -and $script:SignInAnswers -eq 1) 'Ask once for parallel reads that wait on the same sign-in.'
     Remove-Item -LiteralPath $marker -Force
+    $noisy = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'noisy-cluster', '--namespace', 'team') }
+    Assert-True ($noisy.status -eq 'sign_in_required' -and $noisy.duration_ms -lt 15000 -and $noisy.output.Contains('not a network or cluster failure')) ('Find a prompt after long stderr diagnostics, and report a failed sign-in. ' + $noisy.output)
+    # Context names are case-sensitive, so a sign-in for one context never stands in for another.
+    $script:SignInAnswers = 0
+    function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; return 'n' }
+    $Session.CommandSignIns = @(@{ key = '--context=Prod'; completed = [datetime]::UtcNow.AddMinutes(1); signed_in = $true })
+    $before = [datetime]::UtcNow
+    $other = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'prod'); program = @{ path = 'unused.exe' } }
+    $same = @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'Prod'); program = @{ path = 'unused.exe' } }
+    Assert-True (-not (Invoke-FlintCommandSignIn $Session $other $before 'case-other') -and $script:SignInAnswers -eq 1) 'Ask again for a context that differs only in case.'
+    Assert-True ((Invoke-FlintCommandSignIn $Session $same $before 'case-same') -and $script:SignInAnswers -eq 1) 'Reuse a sign-in for the same context.'
     # Stop kubectl before the worker deadline so its own output explains the timeout.
     $Session.ToolTimeoutSec = 10
     $hung = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('hang') }

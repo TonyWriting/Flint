@@ -23,7 +23,8 @@ function Invoke-FlintCommandSignIn {
     $signIn = @(Get-FlintSignInArguments @($Invocation.arguments))
     $key = ($signIn | Select-Object -Skip 1) -join ' '
     # Parallel calls hit the same prompt; one answer covers every call that started before it.
-    $previous = $Session.CommandSignIns[$key]
+    # Context and user names are case-sensitive, so keys are compared with -ceq rather than a hashtable lookup.
+    $previous = @($Session.CommandSignIns | Where-Object { $_.key -ceq $key }) | Select-Object -Last 1
     if ($previous -and $previous.completed -gt $CallStarted) { return [bool]$previous.signed_in }
     $answer = Read-FlintSignInApproval $Session $signIn
     $approved = $null -ne $answer -and $answer.Trim() -ceq 'y'
@@ -35,8 +36,13 @@ function Invoke-FlintCommandSignIn {
         # No window and no stderr redirection: the plugin prints its sign-in instructions in this terminal.
         $state = @{ process = $null }
         try {
-            $state.process = Start-Process -FilePath $Invocation.program.path -ArgumentList $arguments -WorkingDirectory $Session.Root `
-                -NoNewWindow -PassThru -RedirectStandardOutput $outputPath -ErrorAction Stop
+            # kubectl and its credential plugin must not inherit Flint's own credentials.
+            $savedEnvironment = @{}
+            Hide-FlintAzureSecretEnvironment $savedEnvironment
+            try {
+                $state.process = Start-Process -FilePath $Invocation.program.path -ArgumentList $arguments -WorkingDirectory $Session.Root `
+                    -NoNewWindow -PassThru -RedirectStandardOutput $outputPath -ErrorAction Stop
+            } finally { Restore-FlintAzureEnvironment $savedEnvironment }
             $null = $state.process.Handle
             # Device codes expire after about 15 minutes.
             $deadline = [datetime]::UtcNow.AddMinutes(15)
@@ -52,7 +58,7 @@ function Invoke-FlintCommandSignIn {
         if ($signedIn) { Write-Host 'Signed in. Running the command again.' -ForegroundColor Green }
         else { Write-Host 'Sign-in did not complete.' -ForegroundColor Yellow }
     }
-    $Session.CommandSignIns[$key] = @{ completed = [datetime]::UtcNow; signed_in = $signedIn }
+    $Session.CommandSignIns = @(@($Session.CommandSignIns | Where-Object { $_.key -cne $key }) + @{ key = $key; completed = [datetime]::UtcNow; signed_in = $signedIn })
     Write-FlintEvent $Session 'command_sign_in' @{
         call_id = $CallId; arguments = $signIn; approved = $approved; signed_in = $signedIn; exit_code = $exitCode; duration_ms = Get-FlintElapsedMs $started
     }

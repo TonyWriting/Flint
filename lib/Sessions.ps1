@@ -47,7 +47,7 @@ function New-AgentSession {
         ProtectedPaths = @($config.ConfigPath, $logDirectory.FullName)
         Plugins = @($plugins.loaded); PluginErrors = @($plugins.errors)
         CommandRules = @{ kubectl = $commandRules }; GuardedPatchResources = @($guarded | Sort-Object)
-        Approvals = @{ kubectl = @(); azure = @(); files = @() }; CommandSignIns = @{}
+        Approvals = @{ kubectl = @(); azure = @(); files = @() }; CommandSignIns = @()
         RequestTimeoutSec = $RequestTimeoutSec; ToolTimeoutSec = $ToolTimeoutSec
         TurnLimit = 20
         MaxToolCalls = $MaxToolCalls; MaxParallelTools = $MaxParallelTools; MaxOutputTokens = $MaxOutputTokens

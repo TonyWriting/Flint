@@ -67,10 +67,11 @@ function Test-FlintProcess {
     if ($State.prompt_pattern -and (Test-Path -LiteralPath $State.stderr_path)) {
         # A hidden process cannot answer a prompt; stop at the prompt instead of waiting for the timeout.
         $length = (Get-Item -LiteralPath $State.stderr_path).Length
-        if ($length -ne $State.stderr_checked -and $length -le 65536) {
+        if ($length -ne $State.stderr_checked) {
             $State.stderr_checked = $length
+            # A prompt is the last thing printed before the wait, so the recent lines suffice at any output size.
             $text = ''
-            try { $text = [string](Get-Content -LiteralPath $State.stderr_path -Raw -Encoding UTF8 -ErrorAction Stop) } catch { }
+            try { $text = @(Get-Content -LiteralPath $State.stderr_path -Tail 20 -Encoding UTF8 -ErrorAction Stop) -join "`n" } catch { }
             if ($text -match $State.prompt_pattern) { $State.status = 'prompted'; return $true }
         }
     }
