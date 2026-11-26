@@ -60,19 +60,8 @@ function Get-AgentTools {
         }
     }
     [ordered]@{
-        type = 'function'; name = 'keyvault_list_secrets'; strict = $true
-        description = 'List Key Vault secret names and metadata using the startup Azure identity; never reads secret values. Includes disabled secrets; excludes deleted secrets and individual versions. Follow next_link with this tool until has_more=false. page_count covers this page; total_count is available only for a single-page result. For a multi-page total, sum page_count once per page. Returns a preview and result_path for read_file. Requires secrets/list permission or Key Vault Reader and network access.'
-        parameters = [ordered]@{
-            type = 'object'; additionalProperties = $false; required = @('vault_name', 'next_link')
-            properties = [ordered]@{
-                vault_name = [ordered]@{ type = 'string'; description = 'Azure public-cloud Key Vault name, for example demo-vault.' }
-                next_link = [ordered]@{ type = 'string'; description = 'Empty string for the first page. For subsequent pages, use the exact next_link returned for the same vault.' }
-            }
-        }
-    }
-    [ordered]@{
         type = 'function'; name = 'azure_request'; strict = $true
-        description = 'Call the Azure Resource Manager management API using the startup identity. Requests can target different subscriptions in the authenticated tenant, subject to RBAC. Tools cannot change identity; authentication_required means the user must restart Flint to authenticate. Use keyvault_list_secrets for secret metadata. Prefer API filtering and Resource Graph aggregation. Returns HTTP status, the body (a 16384-character preview when longer) and result_path for read_file/search_text. The saved file holds the complete redacted body of one response; preview_truncated affects only the preview and item_count counts only that page. Follow next_link or saved nextLink only on management.azure.com, using its path and query for the next request. HTTP 202 or status=pending leaves completion unconfirmed. Follow poll_path exactly with GET and body="" until operation_status=Succeeded or terminal failure; the harness enforces poll_after_utc. Report pending if the required wait exceeds the call budget; without poll_path, inspect resource state and report uncertainty. Never repeat a mutation to poll. HTTP 200 can contain failed or canceled operations: inspect status, operation_status and service_error, then verify resource state after success.'
+        description = 'Call the Azure Resource Manager management API using the startup identity. Requests can target different subscriptions in the authenticated tenant, subject to RBAC. Tools cannot change identity; authentication_required means the user must restart Flint to authenticate. Prefer API filtering and Resource Graph aggregation. Returns HTTP status, the body (a 16384-character preview when longer) and result_path for read_file/search_text. The saved file holds the complete redacted body of one response; preview_truncated affects only the preview and item_count counts only that page. Follow next_link or saved nextLink only on management.azure.com, using its path and query for the next request. HTTP 202 or status=pending leaves completion unconfirmed. Follow poll_path exactly with GET and body="" until operation_status=Succeeded or terminal failure; the harness enforces poll_after_utc. Report pending if the required wait exceeds the call budget; without poll_path, inspect resource state and report uncertainty. Never repeat a mutation to poll. HTTP 200 can contain failed or canceled operations: inspect status, operation_status and service_error, then verify resource state after success.'
         parameters = [ordered]@{
             type = 'object'; additionalProperties = $false; required = @('method', 'path', 'body', 'purpose')
             properties = [ordered]@{
@@ -119,6 +108,5 @@ function ConvertTo-FlintToolArguments {
         throw 'Provide a nonempty single-line purpose of at most 1000 characters describing the target and expected effect.'
     }
     if ($Name -ceq 'azure_request') { Assert-FlintAzureRequest $parsed }
-    if ($Name -ceq 'keyvault_list_secrets') { $null = Get-FlintKeyVaultListUri $parsed }
     return $parsed
 }

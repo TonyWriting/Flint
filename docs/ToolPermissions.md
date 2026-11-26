@@ -16,7 +16,7 @@ Flint 的工具由模型提出调用，Flint 在执行前检查权限：只读�
 
 ## Kubernetes
 
-`run_command` 使用 PATH 中的 `kubectl.exe` 和已有的 kubeconfig，集群认证由 kubeconfig 决定，与 Azure 登录无关。参数按字面值传给 kubectl，不经过 shell。每个请求都写明 `--context`，命名空间资源同时写明 `--namespace`，因此不需要切换全局 context。交互式的 `kubectl edit` 不可用。
+`run_command` 目前只执行 kubectl：调用中的 `executor` 只能是 `kubectl`，其他程序和 shell 命令都会被拒绝。它使用 PATH 中的 `kubectl.exe` 和已有的 kubeconfig，集群认证由 kubeconfig 决定，与 Azure 登录无关。参数按字面值传给 kubectl，不经过 shell。每个请求都写明 `--context`，命名空间资源同时写明 `--namespace`，因此不需要切换全局 context。交互式的 `kubectl edit` 不可用。
 
 kubectl 的输出和 Azure 响应一样保存为结果文件（见[响应文件与异步修改](#响应文件与异步修改)）。修改命令退出成功只说明修改已提交，实际状态需要再次查询确认。kubectl 超时时，Flint 在停止它之前留出几秒，把它已经打印的内容（例如连接错误）返回给模型。
 
@@ -102,8 +102,6 @@ powershell.exe -NoProfile -File .\agent.ps1
 `azure_request` 只访问 Azure 公有云的 `https://management.azure.com`（Azure Resource Manager，ARM），每个请求写明资源路径和 `api-version`。认证统一来自上面的登录，模型不能自带认证 header 或凭据。
 
 GET 请求自动执行。POST 中只有 Resource Graph 资源查询自动执行，并且必须精确符合规则：路径为 `/providers/Microsoft.ResourceGraph/resources?api-version=<version>`，版本为 `2021-03-01`、`2022-10-01` 或 `2024-04-01`，不带其他 URL 参数或子路径；body 是 JSON 对象，`query` 为非空字符串，其他顶层字段只能是 `subscriptions`、`managementGroups`、`options`、`facets`。判断只看这些结构，与 KQL 内容和用途说明无关。其他 POST，以及 PUT、PATCH、DELETE，都需要审批。
-
-`keyvault_list_secrets` 只读取一个 vault 中 secret 的名称和元数据（如是否启用、创建与过期时间），不读取 secret 内容，因此自动执行。它需要账户具备 `secrets/list` 权限（RBAC 模式下如 `Key Vault Reader`），并满足 vault 的网络访问限制。
 
 ### 响应文件与异步修改
 

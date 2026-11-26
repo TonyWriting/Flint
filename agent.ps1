@@ -26,7 +26,7 @@ if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -n
 . (Join-Path $PSScriptRoot 'tools\Files.ps1')
 . (Join-Path $PSScriptRoot 'tools\Reading.ps1')
 . (Join-Path $PSScriptRoot 'tools\Searching.ps1')
-foreach ($component in @('Http', 'KeyVault', 'Auth', 'Controller')) {
+foreach ($component in @('Http', 'Auth', 'Controller')) {
     . (Join-Path $PSScriptRoot ('tools\azure\' + $component + '.ps1'))
 }
 foreach ($component in @('Security', 'Telemetry', 'Config', 'Plugins', 'Setup', 'Sessions', 'Markdown', 'Console', 'Ui', 'Runtime', 'Permissions', 'Results', 'WorkerTransport', 'ToolExecution', 'Parallel', 'Context', 'Client', 'Loop')) {

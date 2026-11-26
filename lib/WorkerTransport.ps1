@@ -20,7 +20,7 @@ function New-FlintWorkerRequest {
         }
         $workerArguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', ('"' + $Session.WorkerPath + '"'), '-RequestPath', ('"' + $requestPath + '"'))
         $authentication = @{}
-        if ($Name -cin @('azure_request', 'keyvault_list_secrets')) { $authentication.AzureAccessToken = $AzureAccessToken }
+        if ($Name -ceq 'azure_request') { $authentication.AzureAccessToken = $AzureAccessToken }
         $nativeArguments = @{
             FilePath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
             ArgumentList = $workerArguments; TimeoutSec = $TimeoutSec; WorkingDirectory = $Session.Root; Session = $Session

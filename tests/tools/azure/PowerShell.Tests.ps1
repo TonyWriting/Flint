@@ -68,7 +68,6 @@ try {
         '    if ($script:State.TokenFailure) { throw $script:State.TokenFailure }'
         '    $script:State.TokenCalls += @{ resource = $ResourceUrl; tenant = $TenantId; secure = [bool]$AsSecureString }'
         '    $value = ''private-ps-arm-token'''
-        '    if ($ResourceUrl -ceq ''https://vault.azure.net'') { $value = ''private-ps-keyvault-token'' }'
         '    $token = $value'
         '    if ($AsSecureString) { $token = ConvertTo-SecureString -String $value -AsPlainText -Force }'
         '    $tenant = $TenantId'
@@ -123,16 +122,12 @@ exit /b 1
     Assert-True ($output.Contains('Signed in to Azure as ps-user@example.com') -and $output.Contains('via Azure PowerShell')) 'Report the Azure PowerShell provider at startup.'
     Assert-True (-not $output.Contains('login-output-must-be-discarded')) 'Do not print provider output.'
 
-    Update-FlintAzureToken $Session -Service keyvault
-    $state = Get-FakeAzState
-    Assert-True ($Session.Azure.KeyVault.AccessToken -ceq 'private-ps-keyvault-token' -and $state.TokenCalls[-1].resource -ceq 'https://vault.azure.net') 'Request the Key Vault audience separately through Azure PowerShell.'
-
     Set-FakeAzState @{ TokenFailure = 'AADSTS50076: Due to a configuration change you must use multi-factor authentication. Run Connect-AzAccount.' }
     $Session.Azure.ExpiresUtc = [datetime]::UtcNow
     $message = ''
     try { Update-FlintAzureToken $Session } catch { $message = $_.Exception.Message }
     Assert-True ((Test-FlintAzureAuthenticationError $message) -and (Get-FakeAzState).LoginCalls -eq 0) 'Classify Azure PowerShell interaction failures without signing in during a session.'
-    Assert-True ((Test-FlintAzureAuthenticationError 'Restart Flint to sign in to Azure for Key Vault authentication.')) 'Classify provider-neutral restart messages as authentication failures.'
+    Assert-True ((Test-FlintAzureAuthenticationError 'Restart Flint to sign in to Azure.')) 'Classify provider-neutral restart messages as authentication failures.'
 
     Set-FakeAzState @{ Context = $null; TokenFailure = ''; TokenTenant = ''; SelectorOff = $false }
     Reset-AzureSession

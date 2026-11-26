@@ -48,61 +48,27 @@ function Read-FlintAzureApproval {
     try { return Read-Host 'y/n (default n)' } catch { return $null }
 }
 
-function New-FlintKeyVaultInvocation {
-    param([hashtable]$Session, $ToolArguments)
-    $uri = Get-FlintKeyVaultListUri $ToolArguments
-    return [ordered]@{ executor = 'keyvault'; account = $Session.Azure.Account; tenant = $Session.Azure.Tenant; method = 'GET'; uri = $uri; body = '' }
-}
-
 function Complete-FlintAzureResult {
-    param([hashtable]$Session, $Result, [string]$Service = 'arm')
+    param([hashtable]$Session, $Result)
     if ($Result.http_status -eq 401 -or $Result.status -eq 'authentication_required') {
         $Result.status = 'authentication_required'; $Result.retryable = $false
-        if ($Service -eq 'keyvault') {
-            $Session.Azure.KeyVault.Status = 'authentication_required'
-            $Result.output = 'Key Vault authentication requires a new sign-in. Restart Flint to sign in to Azure.'
-        } else {
-            $Session.Azure.Status = 'authentication_required'
-            $Session.Azure.Message = 'Azure authentication is no longer valid. Restart Flint to sign in to Azure; no interactive login is attempted during tool calls.'
-            $Result.output = $Session.Azure.Message
-        }
+        $Session.Azure.Status = 'authentication_required'
+        $Session.Azure.Message = 'Azure authentication is no longer valid. Restart Flint to sign in to Azure; no interactive login is attempted during tool calls.'
+        $Result.output = $Session.Azure.Message
     }
     return $Result
 }
 
 function New-FlintAzureFailure {
-    param([hashtable]$Session, $Record, [string]$Service = 'arm')
+    param([hashtable]$Session, $Record)
     $message = Protect-FlintText $Session $Record.Exception.Message
     $failure = Get-FlintFailureDetails $Session $Record
     if (Test-FlintAzureAuthenticationError $message) {
-        if ($Service -eq 'keyvault') {
-            if ($Session.Azure.KeyVault) { $Session.Azure.KeyVault.Status = 'authentication_required' }
-            $message = 'Key Vault authentication requires user interaction. Restart Flint to sign in to Azure.'
-        } else {
-            $Session.Azure.Status = 'authentication_required'
-            $Session.Azure.Message = 'Azure authentication requires user interaction. Restart Flint to sign in to Azure; no interactive login is attempted during tool calls.'
-            $message = $Session.Azure.Message
-        }
-        return @{ status = 'authentication_required'; exit_code = $null; output = $message; retryable = $false; failure = $failure }
+        $Session.Azure.Status = 'authentication_required'
+        $Session.Azure.Message = 'Azure authentication requires user interaction. Restart Flint to sign in to Azure; no interactive login is attempted during tool calls.'
+        return @{ status = 'authentication_required'; exit_code = $null; output = $Session.Azure.Message; retryable = $false; failure = $failure }
     }
     return @{ status = 'error'; exit_code = $null; output = $message; retryable = $false; failure = $failure }
-}
-
-function Invoke-FlintKeyVaultListSecrets {
-    param([hashtable]$Session, $ToolArguments, $Invocation, [double]$TimeoutSec)
-    $current = New-FlintKeyVaultInvocation $Session $ToolArguments
-    if ((ConvertTo-Json $current -Compress) -cne (ConvertTo-Json $Invocation -Compress)) { throw 'The Key Vault metadata request changed after authorization.' }
-    $started = [datetime]::UtcNow
-    try {
-        Update-FlintAzureToken $Session -Service keyvault
-        $remaining = $TimeoutSec - ((Get-FlintElapsedMs $started) / 1000)
-        if ($remaining -le 0) { return @{ status = 'timeout'; exit_code = $null; output = 'The time budget was consumed while obtaining the Key Vault token. No HTTP request was sent.'; retryable = $false } }
-        $result = Invoke-FlintWorker $Session keyvault_list_secrets $ToolArguments -TimeoutSec $remaining -CommandInvocation $Invocation -AzureAccessToken $Session.Azure.KeyVault.AccessToken
-        return Complete-FlintAzureResult $Session $result keyvault
-    } catch {
-        if ($Session.LogFailed) { throw }
-        return New-FlintAzureFailure $Session $_ keyvault
-    }
 }
 
 function Resolve-FlintAzurePermission {

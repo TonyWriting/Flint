@@ -4,7 +4,7 @@ function Get-FlintParallelCall {
     try {
         $parsed = ConvertTo-FlintToolArguments $Call.name $Call.arguments
         if (Test-FlintUnsafeArguments $Session $Call.arguments) { return $null }
-        $plan = @{ arguments = $parsed; invocation = $null; service = ''; event = ''; source = ''; rule_source = '' }
+        $plan = @{ arguments = $parsed; invocation = $null; azure = $false; event = ''; source = ''; rule_source = '' }
         if ($Call.name -cin @('read_file', 'list_files', 'search_text')) { return $plan }
         if ($Call.name -ceq 'run_command') {
             $plan.invocation = New-FlintCommandInvocation $Session $parsed
@@ -13,18 +13,13 @@ function Get-FlintParallelCall {
                 $plan.event = 'command_permission'; $plan.source = 'fixed_read'; $plan.rule_source = $ruleSource
                 return $plan
             }
-        } elseif ($Call.name -cin @('azure_request', 'keyvault_list_secrets') -and $Session.Azure.Status -eq 'ready') {
+        } elseif ($Call.name -ceq 'azure_request' -and $Session.Azure.Status -eq 'ready') {
             $plan.event = 'azure_permission'
-            if ($Call.name -ceq 'keyvault_list_secrets') {
-                $plan.invocation = New-FlintKeyVaultInvocation $Session $parsed
-                $plan.service = 'keyvault'; $plan.source = 'keyvault_metadata'
-                return $plan
-            }
             $plan.invocation = New-FlintAzureInvocation $Session $parsed
             # Stateful polling retains its existing wait and continuation protocol.
             if ($plan.invocation.poll_kind) { return $null }
             $plan.source = Get-FlintAzureReadOnlyRule $plan.invocation.method $plan.invocation.uri $plan.invocation.body
-            if ($plan.source) { $plan.service = 'arm'; return $plan }
+            if ($plan.source) { $plan.azure = $true; return $plan }
         }
     } catch { }
     return $null
@@ -71,18 +66,17 @@ function Invoke-FlintParallelTools {
                     if ($state.plan.rule_source) { $permissionEvent.rule_source = $state.plan.rule_source }
                     Write-FlintEvent $Session $state.plan.event $permissionEvent
                 }
-                if ($state.plan.service) {
+                if ($state.plan.azure) {
                     Show-FlintActivity $Session 'Preparing Azure queries'
                     $authenticationStarted = [datetime]::UtcNow
-                    Update-FlintAzureToken $Session -Service $state.plan.service
+                    Update-FlintAzureToken $Session
                     $state.budget -= (Get-FlintElapsedMs $authenticationStarted) / 1000
                     $state.access_token = $Session.Azure.AccessToken
-                    if ($state.plan.service -eq 'keyvault') { $state.access_token = $Session.Azure.KeyVault.AccessToken }
                 }
                 if ($state.budget -le 0) { $state.result = @{ status = 'timeout'; exit_code = $null; retryable = $false; output = 'The time budget was consumed while obtaining authentication. No request was sent.' } }
             } catch {
                 if ($Session.LogFailed) { throw }
-                if ($state.plan.service) { $state.result = New-FlintAzureFailure $Session $_ $state.plan.service }
+                if ($state.plan.azure) { $state.result = New-FlintAzureFailure $Session $_ }
                 else { $state.result = @{ status = 'error'; exit_code = $null; retryable = $false; output = $_.Exception.Message; failure = Get-FlintFailureDetails $Session $_ } }
             }
         }
@@ -98,7 +92,7 @@ function Invoke-FlintParallelTools {
                 try {
                     if (-not $state.result -and $state.worker -and (Test-FlintProcess $state.worker.process)) {
                         try { $state.result = Complete-FlintWorker $state.worker } finally { $state.worker = $null }
-                        if ($state.plan.service) { $state.result = Complete-FlintAzureResult $Session $state.result $state.plan.service }
+                        if ($state.plan.azure) { $state.result = Complete-FlintAzureResult $Session $state.result }
                         if ($state.result.status -eq 'error' -and $state.result.retryable -and $state.attempt -lt 3) {
                             $delay = @(1, 2, 4)[$state.attempt]
                             if ($null -ne $state.result.retry_after_seconds -and $state.result.retry_after_seconds -gt $delay) { $delay = $state.result.retry_after_seconds }
@@ -112,7 +106,7 @@ function Invoke-FlintParallelTools {
                     if (-not $state.result -and -not $state.worker -and [datetime]::UtcNow -ge $state.next_attempt) {
                         $remaining = ($state.deadline - [datetime]::UtcNow).TotalSeconds
                         if ($remaining -le 0) { $state.result = @{ status = 'timeout'; exit_code = $null; retryable = $false; output = 'Tool time budget exhausted.' } }
-                        elseif ($state.plan.service -and ($Session.Azure.Status -ne 'ready' -or ($state.plan.service -eq 'keyvault' -and $Session.Azure.KeyVault.Status -eq 'authentication_required'))) {
+                        elseif ($state.plan.azure -and $Session.Azure.Status -ne 'ready') {
                             $state.result = @{ status = 'authentication_required'; exit_code = $null; retryable = $false; output = 'Azure authentication is unavailable. Restart Flint to sign in.' }
                         } else {
                             $state.worker = Start-FlintWorker $Session $state.call.name $state.parsed -TimeoutSec $remaining -CommandInvocation $state.plan.invocation -AzureAccessToken $state.access_token
@@ -149,7 +143,7 @@ function Invoke-FlintParallelTools {
             if ($state.worker) {
                 try {
                     $state.result = Complete-FlintWorker $state.worker
-                    if ($state.plan.service) { $state.result = Complete-FlintAzureResult $Session $state.result $state.plan.service }
+                    if ($state.plan.azure) { $state.result = Complete-FlintAzureResult $Session $state.result }
                 } catch { $state.result = @{ status = 'error'; exit_code = $null; retryable = $false; output = $_.Exception.Message; failure = Get-FlintFailureDetails $Session $_ } }
                 finally { $state.worker = $null }
             }
