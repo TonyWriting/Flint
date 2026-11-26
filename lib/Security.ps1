@@ -106,12 +106,14 @@ function Protect-FlintValue {
         $safe = [ordered]@{}
         $names = @($Value.PSObject.Properties | ForEach-Object { $_.Name })
         if ($Value -is [System.Collections.IDictionary]) { $names = @($Value.Keys) }
+        $secretName = '(?i)(?:^|[_-])(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|password|passwd|client[-_]?secret|secret|accountkey|sig|signature|authorization)$'
         foreach ($name in $names) {
             $safeName = Protect-FlintText $Session $name $Secrets
             if (-not $Untrusted -and $name -ceq 'encrypted_content' -and $Value.type -ceq 'reasoning') {
                 # Service-issued reasoning state goes back unchanged; a pattern match inside it would break every later request.
                 $safe[$safeName] = $Value.$name
-            } elseif ($name -match '(?i)(?:^|[_-])(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|password|passwd|client[-_]?secret|secret|accountkey|sig|signature|authorization)$') {
+            } elseif ($name -match $secretName -or $safeName -match $secretName) {
+                # The cleaned name is checked too: control sequences removed from a name must not hide a credential field.
                 $safe[$safeName] = '[redacted]'
             } else { $safe[$safeName] = Protect-FlintValue $Session $Value.$name -Untrusted:$Untrusted -Secrets $Secrets }
         }
