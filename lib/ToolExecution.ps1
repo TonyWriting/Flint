@@ -55,7 +55,7 @@ function Invoke-FlintCommandSignIn {
             Stop-FlintProcess $state
             Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
         }
-        if ($signedIn) { Write-Host 'Signed in. Running the command again.' -ForegroundColor Green }
+        if ($signedIn) { Write-Host 'Signed in.' -ForegroundColor Green }
         else { Write-Host 'Sign-in did not complete.' -ForegroundColor Yellow }
     }
     $Session.CommandSignIns = @(@($Session.CommandSignIns | Where-Object { $_.key -cne $key }) + @{ key = $key; completed = [datetime]::UtcNow; signed_in = $signedIn })
@@ -116,6 +116,7 @@ function Invoke-AgentTool {
         $deadline = ([datetime]::UtcNow).AddSeconds($Session.ToolTimeoutSec)
         # Reads stop at once; a change runs to completion so its outcome stays known.
         $Session.StopDeferred = -not ($permission.read_only -or $Name -cin @('list_files', 'read_file', 'search_text'))
+        $signInHandled = $false
         for ($attempt = 0; $permission.allowed -and $attempt -le 3; $attempt++) {
             $remaining = ($deadline - [datetime]::UtcNow).TotalSeconds
             if ($remaining -le 0) {
@@ -130,6 +131,14 @@ function Invoke-AgentTool {
             } else {
                 $result = Invoke-FlintWorker $Session $Name $parsed -TimeoutSec $remaining -CommandInvocation $invocation -WriteDirectory $permission.directory
             }
+            if ($Name -ceq 'run_command' -and $result.status -eq 'sign_in_required' -and -not $signInHandled) {
+                $signInHandled = $true
+                if (-not (Resolve-FlintCommandSignIn $Session $invocation ([bool]$permission.read_only) $started $CallId $result)) { break }
+                # Signing in waited for the user, so the read starts over with a fresh time budget and its retries.
+                $deadline = ([datetime]::UtcNow).AddSeconds($Session.ToolTimeoutSec)
+                $attempt = -1
+                continue
+            }
             # A session approval never classifies an unknown command as read-only.
             if (-not $permission.read_only -or $result.status -ne 'error' -or -not $result.retryable -or $attempt -eq 3) { break }
             $delay = @(1, 2, 4)[$attempt]
@@ -137,12 +146,6 @@ function Invoke-AgentTool {
             if (($deadline - [datetime]::UtcNow).TotalSeconds -le $delay) { break }
             Write-FlintEvent $Session 'tool_retry' @{ call_id = $CallId; attempt = $attempt + 2; delay_seconds = $delay; result = $result }
             if (-not (Wait-FlintRetry $Session $delay $deadline ('Retrying command ({0}/3) in {1}s' -f ($attempt + 1), $delay))) { break }
-        }
-        if ($Name -ceq 'run_command' -and $result.status -eq 'sign_in_required' -and
-            (Resolve-FlintCommandSignIn $Session $invocation ([bool]$permission.read_only) $started $CallId $result)) {
-            # Signing in waited for the user, so the command gets a fresh time budget.
-            Show-FlintActivity $Session (Get-FlintToolLabel $Name $parsed)
-            $result = Invoke-FlintWorker $Session $Name $parsed -TimeoutSec $Session.ToolTimeoutSec -CommandInvocation $invocation
         }
     } catch {
         if ($Session.LogFailed) { throw }

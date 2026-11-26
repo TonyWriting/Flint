@@ -24,7 +24,8 @@ class Recorder {
         if (args.Length > 0 && args[0] == "fail") { Console.Write("partial"); Console.Error.Write("failure"); return 7; }
         if (args.Length > 0 && args[0] == "empty") return 0;
         if (args.Length > 0 && args[0] == "sleep") Thread.Sleep(30000);
-        if (Array.Exists(args, a => a.Contains("signin-cluster"))) {
+        if (Array.Exists(args, a => a.Contains("slow-pod"))) Thread.Sleep(3000);
+        if (Array.Exists(args, a => a.Contains("signin-cluster") || a.Contains("flaky-cluster"))) {
             // Mimic a credential plugin: print a device-code prompt and wait, until a sign-in leaves a cached marker.
             string marker = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "signed-in.marker");
             if (args[0] == "version") { System.IO.File.WriteAllText(marker, "signed in"); Console.Error.WriteLine("Fixture sign-in complete."); return 0; }
@@ -32,6 +33,13 @@ class Recorder {
                 Console.Error.WriteLine("To sign in, use a web browser to open the page https://login.example.com/device and enter the code FIXTURE42 to authenticate.");
                 Console.Error.Flush();
                 Thread.Sleep(30000);
+                return 1;
+            }
+            // After signing in, the flaky cluster fails once with a transient error.
+            string flaky = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "flaky-once.marker");
+            if (Array.Exists(args, a => a.Contains("flaky-cluster")) && !System.IO.File.Exists(flaky)) {
+                System.IO.File.WriteAllText(flaky, "failed once");
+                Console.Error.Write("Error from server (ServiceUnavailable): fixture transient failure");
                 return 1;
             }
         }
@@ -114,21 +122,29 @@ class Recorder {
     Assert-True ($signedIn.status -eq 'ok' -and $signedIn.output.Contains('signin-cluster') -and $script:SignInAnswers -eq 1) ('Sign in when the user agrees, then run the read again. ' + $signedIn.output)
     Assert-True (($script:SignInArguments -join ' ') -ceq 'version --context=signin-cluster') 'Sign in with a harmless read for the same context.'
     Remove-Item -LiteralPath $marker -Force
+    # A read that signs in starts over with the normal retries for transient errors.
+    $flaky = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'flaky-cluster', '--namespace', 'team') }
+    $retries = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'tool_retry' })
+    Assert-True ($flaky.status -eq 'ok' -and $flaky.output.Contains('flaky-cluster') -and $retries.Count -eq 1) ('Retry a transient error after signing in. ' + $flaky.output)
+    Remove-Item -LiteralPath $marker -Force
     $change = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('scale', 'deployments', 'demo', '--replicas=2', '--context', 'signin-cluster', '--namespace', 'team') }
     Assert-True ($change.status -eq 'sign_in_required' -and $change.outcome_unknown -and $change.output.Contains('submit the same command again') -and (Test-Path -LiteralPath $marker)) 'Sign in for a change but leave rerunning it to the model after a state check.'
     Remove-Item -LiteralPath $marker -Force
-    # Parallel reads waiting on the same sign-in ask once, then all run again.
-    $script:SignInAnswers = 0
+    # Parallel reads waiting on the same sign-in ask once, after every other call has finished, then all run again.
+    $script:SignInAnswers = 0; $script:SiblingDoneAtSignIn = $null
+    function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; $script:SiblingDoneAtSignIn = $completed.ContainsKey('slow-sibling'); return 'y' }
     $calls = @(
         @{ type = 'function_call'; call_id = 'signin-a'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'a', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read pod a.' }) },
-        @{ type = 'function_call'; call_id = 'signin-b'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'b', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read pod b.' }) }
+        @{ type = 'function_call'; call_id = 'signin-b'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'b', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read pod b.' }) },
+        @{ type = 'function_call'; call_id = 'slow-sibling'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'slow-pod', '--context', 'cc-test', '--namespace', 'team'); purpose = 'Read a slow pod.' }) }
     )
-    Assert-True (@($calls | Where-Object { Get-FlintParallelCall $Session $_ }).Count -eq 2) 'Classify both sign-in reads for parallel execution.'
+    Assert-True (@($calls | Where-Object { Get-FlintParallelCall $Session $_ }).Count -eq 3) 'Classify the sign-in reads and their sibling for parallel execution.'
     $completed = @{}; $progress = @{ tool_count = 0 }
     Invoke-FlintParallelTools $Session $calls $completed $progress
     $outputs = @{}
     foreach ($item in $Session.History) { if ($item.type -eq 'function_call_output') { $outputs[$item.call_id] = ConvertFrom-Json $item.output } }
-    Assert-True ($outputs['signin-a'].status -eq 'ok' -and $outputs['signin-b'].status -eq 'ok' -and $script:SignInAnswers -eq 1) 'Ask once for parallel reads that wait on the same sign-in.'
+    Assert-True ($outputs['signin-a'].status -eq 'ok' -and $outputs['signin-b'].status -eq 'ok' -and $outputs['slow-sibling'].status -eq 'ok' -and $script:SignInAnswers -eq 1) 'Ask once for parallel reads that wait on the same sign-in.'
+    Assert-True ($script:SiblingDoneAtSignIn -eq $true) 'Sign in only after other parallel calls finish, so their deadlines stay enforced.'
     Remove-Item -LiteralPath $marker -Force
     $noisy = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'noisy-cluster', '--namespace', 'team') }
     Assert-True ($noisy.status -eq 'sign_in_required' -and $noisy.duration_ms -lt 15000 -and $noisy.output.Contains('not a network or cluster failure')) ('Find a prompt after long stderr diagnostics, and report a failed sign-in. ' + $noisy.output)

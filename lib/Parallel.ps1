@@ -98,14 +98,9 @@ function Invoke-FlintParallelTools {
                 try {
                     if (-not $state.result -and $state.worker -and (Test-FlintProcess $state.worker.process)) {
                         try { $state.result = Complete-FlintWorker $state.worker } finally { $state.worker = $null }
-                        if ($state.call.name -ceq 'run_command' -and $state.result.status -eq 'sign_in_required' -and -not $state.signed_in_retry -and
-                            (Resolve-FlintCommandSignIn $Session $state.plan.invocation $true $state.started $state.call.call_id $state.result)) {
-                            # Run it again with a fresh budget, since signing in waited for the user.
-                            $state.signed_in_retry = $true; $state.result = $null
-                            $state.deadline = [datetime]::UtcNow.AddSeconds($Session.ToolTimeoutSec); $state.next_attempt = [datetime]::UtcNow
-                        }
-                        if ($state.plan.service -and $state.result) { $state.result = Complete-FlintAzureResult $Session $state.result $state.plan.service }
-                        if ($state.result -and $state.result.status -eq 'error' -and $state.result.retryable -and $state.attempt -lt 3) {
+                        if ($state.call.name -ceq 'run_command' -and $state.result.status -eq 'sign_in_required' -and -not $state.signed_in_retry) { $state.awaiting_sign_in = $true }
+                        if ($state.plan.service) { $state.result = Complete-FlintAzureResult $Session $state.result $state.plan.service }
+                        if ($state.result.status -eq 'error' -and $state.result.retryable -and $state.attempt -lt 3) {
                             $delay = @(1, 2, 4)[$state.attempt]
                             if ($null -ne $state.result.retry_after_seconds -and $state.result.retry_after_seconds -gt $delay) { $delay = $state.result.retry_after_seconds }
                             if (($state.deadline - [datetime]::UtcNow).TotalSeconds -gt $delay) {
@@ -132,8 +127,22 @@ function Invoke-FlintParallelTools {
                         try { $null = Complete-FlintWorker $state.worker } finally { $state.worker = $null }
                     }
                 }
-                if ($state.result) { Complete-FlintParallelCall $Session $state $Completed }
+                if ($state.result -and -not $state.awaiting_sign_in) { Complete-FlintParallelCall $Session $state $Completed }
                 if ($Session.LogFailed) { throw 'Trajectory write failed. Stopping parallel tools.' }
+            }
+            # Signing in waits for the user, so it starts only after every other call has finished:
+            # no worker is left running without its deadline and output checks.
+            $awaiting = @($states | Where-Object { $_.awaiting_sign_in })
+            if ($awaiting.Count -gt 0 -and @($states | Where-Object { -not $_.done -and -not $_.awaiting_sign_in }).Count -eq 0) {
+                foreach ($state in $awaiting) {
+                    $state.awaiting_sign_in = $false
+                    if (Resolve-FlintCommandSignIn $Session $state.plan.invocation $true $state.started $state.call.call_id $state.result) {
+                        # Run it again with a fresh budget, since signing in waited for the user.
+                        $state.signed_in_retry = $true; $state.result = $null; $state.attempt = 0
+                        $state.deadline = [datetime]::UtcNow.AddSeconds($Session.ToolTimeoutSec); $state.next_attempt = [datetime]::UtcNow
+                    } else { Complete-FlintParallelCall $Session $state $Completed }
+                    if ($Session.LogFailed) { throw 'Trajectory write failed. Stopping parallel tools.' }
+                }
             }
             if (@($states | Where-Object { -not $_.done }).Count -gt 0) { Start-Sleep -Milliseconds 100 }
         }
