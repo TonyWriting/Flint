@@ -17,6 +17,32 @@ function Complete-FlintToolResult {
     return $result
 }
 
+function Invoke-FlintCommandSignIn {
+    param([hashtable]$Session, $Invocation)
+    # Runs the original read in the foreground: kubectl chooses the credentials as usual, and its credential plugin
+    # prints the sign-in instructions in this terminal. Its output is discarded; the caller runs the read again.
+    Write-Host 'Follow the sign-in instructions below. Press s to cancel.' -ForegroundColor Yellow
+    $arguments = @(foreach ($value in $Invocation.arguments) { ConvertTo-FlintNativeArgument $value })
+    $state = @{ process = $null }
+    try {
+        # kubectl and its credential plugin must not inherit Flint's own credentials.
+        $savedEnvironment = @{}
+        Hide-FlintAzureSecretEnvironment $savedEnvironment
+        try {
+            $state.process = Start-Process -FilePath $Invocation.program.path -ArgumentList $arguments -WorkingDirectory $Session.Root `
+                -NoNewWindow -PassThru -RedirectStandardOutput 'NUL' -ErrorAction Stop
+        } finally { Restore-FlintAzureEnvironment $savedEnvironment }
+        $null = $state.process.Handle
+        # Device codes expire after about 15 minutes.
+        $deadline = [datetime]::UtcNow.AddMinutes(15)
+        while (-not $state.process.HasExited -and [datetime]::UtcNow -lt $deadline -and -not (Test-FlintStopKey $Session)) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (-not $state.process.HasExited) { return @{ finished = $false; exit_code = $null } }
+        return @{ finished = $true; exit_code = $state.process.ExitCode }
+    } finally { Stop-FlintProcess $state }
+}
+
 function Invoke-AgentTool {
     param([hashtable]$Session, [string]$Name, [string]$Arguments, [string]$CallId)
     $started = [datetime]::UtcNow
@@ -56,6 +82,7 @@ function Invoke-AgentTool {
         $deadline = ([datetime]::UtcNow).AddSeconds($Session.ToolTimeoutSec)
         # Reads stop at once; a change runs to completion so its outcome stays known.
         $Session.StopDeferred = -not ($permission.read_only -or $Name -cin @('list_files', 'read_file', 'search_text'))
+        $signInTried = $false
         for ($attempt = 0; $permission.allowed -and $attempt -le 3; $attempt++) {
             $remaining = ($deadline - [datetime]::UtcNow).TotalSeconds
             if ($remaining -le 0) {
@@ -69,6 +96,23 @@ function Invoke-AgentTool {
                 $result = Invoke-FlintKeyVaultListSecrets $Session $parsed $invocation -TimeoutSec $remaining
             } else {
                 $result = Invoke-FlintWorker $Session $Name $parsed -TimeoutSec $remaining -CommandInvocation $invocation -WriteDirectory $permission.directory
+            }
+            if ($Name -ceq 'run_command' -and $result.status -eq 'sign_in_required') {
+                $prefix = 'kubectl stopped at an interactive sign-in prompt from its kubeconfig credential plugin. '
+                if ($signInTried) { $result.output = $prefix + 'It asked again after the sign-in attempt, so the sign-in did not take effect. Ask the user to sign in by running the kubectl command in a terminal, then retry.'; break }
+                $signInTried = $true
+                # Running a change again to sign in would change twice; a read of the actual state offers the sign-in.
+                if (-not $permission.read_only) { $result.output = $prefix + 'The change was most likely not sent. Read the actual state first: Flint offers the user the sign-in on that read. Then submit the change again if it is still needed.'; break }
+                $answer = Read-FlintSignInApproval $Session @($invocation.arguments)
+                $signIn = @{ finished = $false; exit_code = $null }
+                if ($null -ne $answer -and $answer.Trim() -ceq 'y') { $signIn = Invoke-FlintCommandSignIn $Session $invocation }
+                Write-FlintEvent $Session 'command_sign_in' @{ call_id = $CallId; answer = [string]$answer; finished = $signIn.finished; exit_code = $signIn.exit_code }
+                if (-not $signIn.finished) { $result.output = $prefix + 'The user did not complete the sign-in. This is not a network or cluster failure. Ask the user to sign in, for example by running the kubectl command once in a terminal, then retry.'; break }
+                # The read runs again even after an error exit, which can still follow a sign-in: its result shows the real state.
+                # Signing in waited for the user, so the read starts over with a fresh time budget and its retries.
+                $deadline = ([datetime]::UtcNow).AddSeconds($Session.ToolTimeoutSec)
+                $attempt = -1
+                continue
             }
             # A session approval never classifies an unknown command as read-only.
             if (-not $permission.read_only -or $result.status -ne 'error' -or -not $result.retryable -or $attempt -eq 3) { break }

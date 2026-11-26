@@ -106,7 +106,22 @@ function Invoke-FlintCommand {
         throw 'The command executable changed after authorization. Submit the command again.'
     }
     $arguments = @(foreach ($value in $ToolArguments.arguments) { ConvertTo-FlintNativeArgument $value })
-    $native = Invoke-FlintProcess -FilePath $program.path -ArgumentList $arguments -TimeoutSec $TimeoutSec -WorkingDirectory $Root
+    # Credential plugins can ask for a device-code sign-in on stderr and then wait for it. Nobody sees a hidden
+    # process, so stop at that prompt and let the parent offer the sign-in in the terminal.
+    # A program running inside a pod can print the same prompt for its own sign-in, so those commands are not watched.
+    $signInPrompt = ''
+    if ($ToolArguments.arguments[0] -cnotin @('exec', 'attach', 'run', 'debug') -and @($ToolArguments.arguments) -cnotcontains '--') {
+        $signInPrompt = '(?i)\bopen the page\s+https://\S+\s+and enter the code\s+\S+'
+    }
+    $native = Invoke-FlintProcess -FilePath $program.path -ArgumentList $arguments -TimeoutSec $TimeoutSec -WorkingDirectory $Root -PromptPattern $signInPrompt
+    if ($native.status -eq 'prompted') {
+        $result = @{
+            status = 'sign_in_required'; exit_code = $null; retryable = $false; duration_ms = $native.duration_ms
+            output = 'kubectl stopped at an interactive sign-in prompt from its kubeconfig credential plugin. This is not a network or cluster failure. Run this call again on its own: Flint then offers the user the sign-in.'
+        }
+        if (Test-FlintKubectlMutation $ToolArguments.arguments) { $result.verification_required = $true; $result.outcome_unknown = $true }
+        return $result
+    }
     $output = (@($native.stdout.TrimEnd("`r", "`n"), $native.stderr.TrimEnd("`r", "`n")) | Where-Object { $_ -ne '' }) -join [Environment]::NewLine
     $retryable = $native.status -eq 'error' -and $output -match '(?i)connection reset|temporarily unavailable|ServiceUnavailable|TLS handshake timeout|i/o timeout|TooManyRequests'
     $result = @{ status = $native.status; exit_code = $native.exit_code; output = $output; retryable = [bool]$retryable; duration_ms = $native.duration_ms }

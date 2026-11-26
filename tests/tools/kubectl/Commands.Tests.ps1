@@ -24,6 +24,50 @@ class Recorder {
         if (args.Length > 0 && args[0] == "fail") { Console.Write("partial"); Console.Error.Write("failure"); return 7; }
         if (args.Length > 0 && args[0] == "empty") return 0;
         if (args.Length > 0 && args[0] == "sleep") Thread.Sleep(30000);
+        if (args.Length > 0 && args[0] == "exec") {
+            // A program inside the pod prints its own device-code prompt; kubectl itself is signed in.
+            Console.Error.WriteLine("To sign in, use a web browser to open the page https://login.example.com/device and enter the code REMOTE42 to authenticate.");
+            Console.Error.Flush();
+            Thread.Sleep(2000);
+            Console.Write("remote output");
+            return 0;
+        }
+        string marker = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "signed-in.marker");
+        string approval = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "approve-sign-in.marker");
+        if (Array.Exists(args, a => a.Contains("signin-cluster") || a.Contains("flaky-cluster") || a.Contains("partial-cluster"))) {
+            // Mimic a credential plugin: print a device-code prompt and wait until the user signs in,
+            // which the test signals with an approval file. The sign-in is then cached in a marker.
+            bool signedInNow = false;
+            if (!System.IO.File.Exists(marker)) {
+                signedInNow = true;
+                Console.Error.WriteLine("To sign in, use a web browser to open the page https://login.example.com/device and enter the code FIXTURE42 to authenticate.");
+                Console.Error.Flush();
+                for (int i = 0; i < 300 && !System.IO.File.Exists(approval); i++) Thread.Sleep(100);
+                if (!System.IO.File.Exists(approval)) return 1;
+                System.IO.File.Delete(approval);
+                System.IO.File.WriteAllText(marker, "signed in");
+                // The partial cluster signs in but cannot reach its API server on this run.
+                if (Array.Exists(args, a => a.Contains("partial-cluster"))) { Console.Error.WriteLine("Unable to connect to the server."); return 1; }
+            }
+            // On the first run after signing in, the flaky cluster fails once with a transient error.
+            string flaky = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "flaky-once.marker");
+            if (!signedInNow && Array.Exists(args, a => a.Contains("flaky-cluster")) && !System.IO.File.Exists(flaky)) {
+                System.IO.File.WriteAllText(flaky, "failed once");
+                Console.Error.Write("Error from server (ServiceUnavailable): fixture transient failure");
+                return 1;
+            }
+        }
+        if (Array.Exists(args, a => a.Contains("noisy-cluster"))) {
+            // A plugin that prints long diagnostics before its prompt; its sign-in never takes effect.
+            for (int i = 0; i < 100; i++) Console.Error.WriteLine("diagnostic " + new string('d', 800));
+            Console.Error.WriteLine("To sign in, use a web browser to open the page https://login.example.com/device and enter the code NOISY42 to authenticate.");
+            Console.Error.Flush();
+            for (int i = 0; i < 300 && !System.IO.File.Exists(approval); i++) Thread.Sleep(100);
+            if (System.IO.File.Exists(approval)) System.IO.File.Delete(approval);
+            Console.Error.WriteLine("Fixture sign-in failed.");
+            return 1;
+        }
+        if (args.Length > 0 && args[0] == "hang") { Console.Error.WriteLine("Unable to connect to the server: fixture i/o timeout"); Console.Error.Flush(); Thread.Sleep(30000); return 1; }
         if (args.Length > 0 && args[0] == "large") {
             // Bounded lines let redirected readers publish output before EOF.
             string line = new string('x', 4096);
@@ -78,6 +122,60 @@ class Recorder {
     Assert-True ($result.status -eq 'ok' -and $result.verification_required -and -not $result.outcome_unknown) 'Require state verification after a successful scoped mutation.'
     $actual = ConvertFrom-Json -InputObject $result.output
     Assert-True ($actual[-1] -ceq $patch) 'Pass the reviewed JSON patch to the native process without shell interpolation.'
+    # A credential plugin waiting for a device-code sign-in stops at the prompt instead of running into the timeout.
+    $marker = Join-Path $TestRoot 'signed-in.marker'; $approval = Join-Path $TestRoot 'approve-sign-in.marker'
+    function Reset-TestSignIn { foreach ($path in @($marker, $approval)) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } }
+    function Get-TestSignIns { return @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'command_sign_in' }) }
+    $read = @('get', 'pods', '--context', 'signin-cluster', '--namespace', 'team')
+    $prompted = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = $read }
+    Assert-True ($prompted.status -eq 'sign_in_required' -and $prompted.duration_ms -lt 15000 -and $prompted.output.Contains('not a network or cluster failure')) ('Stop at a sign-in prompt and explain it without a terminal. ' + $prompted.output)
+    Assert-True (@(Get-TestSignIns).Count -eq 1 -and -not @(Get-TestSignIns)[0].data.finished -and -not (Test-Path -LiteralPath $marker)) 'Never sign in without an answer from the user.'
+    # The approval file stands for the user completing the sign-in in a browser.
+    $script:SignInAnswers = 0; $script:SignInArguments = @()
+    function Read-FlintSignInApproval { param($Session, $Arguments); $script:SignInAnswers++; $script:SignInArguments = $Arguments; Set-Content -LiteralPath $approval -Value 'y'; return 'y' }
+    # The fixture exits 98 when it sees this variable, so a clean sign-in also proves Flint's own credentials stay hidden.
+    $savedKey = $env:FLINT_MODEL_API_KEY; $env:FLINT_MODEL_API_KEY = 'must-not-reach-sign-in'
+    try { $signedIn = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = $read } } finally { $env:FLINT_MODEL_API_KEY = $savedKey }
+    Assert-True ($signedIn.status -eq 'ok' -and $signedIn.output.Contains('signin-cluster') -and $script:SignInAnswers -eq 1) ('Sign in when the user agrees, then run the read again. ' + $signedIn.output)
+    Assert-True (@(Get-TestSignIns)[-1].data.exit_code -eq 0) 'Run the sign-in without Flint''s own credentials.'
+    Assert-True (($script:SignInArguments -join ' ') -ceq ($read -join ' ')) 'Sign in with the original read, so kubectl itself chooses the credentials.'
+    Reset-TestSignIn
+    # A read that signs in starts over with the normal retries for transient errors.
+    $flaky = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'flaky-cluster', '--namespace', 'team') }
+    $retries = @(Get-Content -LiteralPath $Session.TrajectoryPath -Encoding UTF8 | ForEach-Object { ConvertFrom-Json -InputObject $_ } | Where-Object { $_.event -eq 'tool_retry' })
+    Assert-True ($flaky.status -eq 'ok' -and $flaky.output.Contains('flaky-cluster') -and $retries.Count -eq 1) ('Retry a transient error after signing in. ' + $flaky.output)
+    Reset-TestSignIn
+    # A sign-in read that exits with an error can still have signed in, so the read runs again and shows the real state.
+    $partial = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'partial-cluster', '--namespace', 'team') }
+    Assert-True ($partial.status -eq 'ok' -and $partial.output.Contains('partial-cluster') -and @(Get-TestSignIns)[-1].data.exit_code -eq 1) ('Run a read again after a sign-in that exited with an error. ' + $partial.output)
+    Reset-TestSignIn
+    $noisy = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('get', 'pods', '--context', 'noisy-cluster', '--namespace', 'team') }
+    Assert-True ($noisy.status -eq 'sign_in_required' -and $noisy.duration_ms -lt 20000 -and $noisy.output.Contains('did not take effect')) ('Find a prompt after long stderr diagnostics, and report a sign-in that did not take effect. ' + $noisy.output)
+    Reset-TestSignIn
+    # Signing in by running a change again would change twice, so a change asks for a read first.
+    $asked = $script:SignInAnswers
+    $change = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('scale', 'deployments', 'demo', '--replicas=2', '--context', 'signin-cluster', '--namespace', 'team') }
+    Assert-True ($change.status -eq 'sign_in_required' -and $change.outcome_unknown -and $change.output.Contains('Read the actual state first') -and $script:SignInAnswers -eq $asked -and -not (Test-Path -LiteralPath $marker)) ('Never repeat a change to sign in. ' + $change.output)
+    Reset-TestSignIn
+    # Parallel reads only report the prompt; the model runs one again on its own to get the sign-in.
+    $calls = @(
+        @{ type = 'function_call'; call_id = 'signin-a'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'a', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read pod a.' }) },
+        @{ type = 'function_call'; call_id = 'signin-b'; name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'pods', 'b', '--context', 'signin-cluster', '--namespace', 'team'); purpose = 'Read pod b.' }) }
+    )
+    Assert-True (@($calls | Where-Object { Get-FlintParallelCall $Session $_ }).Count -eq 2) 'Classify both sign-in reads for parallel execution.'
+    $completed = @{}; $progress = @{ tool_count = 0 }
+    Invoke-FlintParallelTools $Session $calls $completed $progress
+    $outputs = @{}
+    foreach ($item in $Session.History) { if ($item.type -eq 'function_call_output') { $outputs[$item.call_id] = ConvertFrom-Json $item.output } }
+    Assert-True ($outputs['signin-a'].status -eq 'sign_in_required' -and $outputs['signin-b'].output.Contains('Run this call again on its own') -and $script:SignInAnswers -eq $asked) 'Report a sign-in prompt from parallel reads without asking.'
+    Reset-TestSignIn
+    # A device-code prompt from a program inside the pod is that program's output, not a kubectl sign-in.
+    $remote = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('exec', 'demo', '--context', 'cc-test', '--namespace', 'team', '--', 'az', 'login') }
+    Assert-True ($remote.status -eq 'ok' -and $remote.output.Contains('remote output') -and $remote.output.Contains('REMOTE42')) ('Do not treat a prompt from inside the pod as a kubectl sign-in. ' + $remote.output)
+    # Stop kubectl before the worker deadline so its own output explains the timeout.
+    $Session.ToolTimeoutSec = 10
+    $hung = Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('hang') }
+    Assert-True ($hung.status -eq 'timeout' -and $hung.output.Contains('Unable to connect to the server')) ('Return what kubectl printed before a timeout. ' + $hung.output)
     $Session.ToolTimeoutSec = 2
     Assert-True ((Invoke-TestTool run_command @{ executor = 'kubectl'; arguments = @('sleep') }).status -eq 'timeout') 'Bound the entire worker and native process tree.'
     $Session.ToolTimeoutSec = 30

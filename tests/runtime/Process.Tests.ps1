@@ -24,6 +24,35 @@ try {
         $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 10 $WorkRoot
         Assert-True ($result.status -eq 'ok' -and $result.stdout.TrimEnd().EndsWith('final marker')) ('Finalize asynchronous stream capture before reading or deleting files.' + (Format-TestResult $result))
     }
+    # A prompt printed after more than 64 KiB of diagnostics, and after a pause, still stops the wait at once.
+    $promptPattern = '(?i)\bopen the page\s+https://\S+\s+and enter the code\s+\S+'
+    Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value @(
+        "1..100 | ForEach-Object { [Console]::Error.WriteLine('diagnostic ' + ('d' * 800)) }"
+        'Start-Sleep -Milliseconds 1500'
+        "[Console]::Error.WriteLine('To sign in, use a web browser to open the page https://login.example.com/device and enter the code LATE42 to authenticate.')"
+        'Start-Sleep -Seconds 30'
+    )
+    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 15 $WorkRoot -PromptPattern $promptPattern
+    Assert-True ($result.status -eq 'prompted' -and $result.duration_ms -lt 10000 -and $result.stderr.Contains('LATE42')) ('Stop at a prompt that follows long stderr output.' + (Format-TestResult $result))
+    # Stderr beyond the output limit is never read for a prompt; the limit ends the process instead.
+    Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value @(
+        "[Console]::Error.Write('x' * 1200000)"
+        "[Console]::Error.WriteLine()"
+        "[Console]::Error.WriteLine('To sign in, use a web browser to open the page https://login.example.com/device and enter the code BIG42 to authenticate.')"
+        'Start-Sleep -Seconds 30'
+    )
+    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 15 $WorkRoot -PromptPattern $promptPattern
+    Assert-True ($result.status -eq 'output_limit') ('Apply the output limit before scanning stderr for a prompt.' + (Format-TestResult $result))
+    # The limit covers stdout and stderr together, even when stderr alone is small and holds a prompt.
+    Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value @(
+        "[Console]::Out.Write('o' * 800000); [Console]::Out.Flush()"
+        'Start-Sleep -Milliseconds 1500'
+        "[Console]::Error.WriteLine('e' * 300000)"
+        "[Console]::Error.WriteLine('To sign in, use a web browser to open the page https://login.example.com/device and enter the code BOTH42 to authenticate.')"
+        'Start-Sleep -Seconds 30'
+    )
+    $result = Invoke-FlintProcess $nativePowerShell @('-NoProfile', '-NonInteractive', '-File', ('"' + $fixturePath + '"')) 15 $WorkRoot -PromptPattern $promptPattern
+    Assert-True ($result.status -eq 'output_limit') ('Apply the combined output limit before a prompt.' + (Format-TestResult $result))
     $pidPath = Join-Path $TestRoot 'pid.txt'
     $pidLiteral = $pidPath.Replace("'", "''")
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value ("Set-Content -LiteralPath '" + $pidLiteral + "' -Value `$PID; Start-Sleep -Seconds 60")

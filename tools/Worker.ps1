@@ -22,7 +22,10 @@ try {
     $parsed = ConvertTo-FlintToolArguments $request.name (ConvertTo-Json -InputObject $request.arguments -Depth 16 -Compress)
     if ($request.name -ceq 'run_command') {
         $guarded = @($request.guarded_patch_resources | Where-Object { $_ -is [string] -and $_ })
-        $result = Invoke-FlintCommand $request.root $parsed $request.command_invocation $request.timeout_sec -SessionId $request.session_id -GuardedResources $guarded
+        # Stop kubectl before the parent stops this worker, leaving time to return what kubectl printed.
+        $commandTimeout = $request.timeout_sec - ((Get-FlintElapsedMs $scriptStarted) / 1000) - 5
+        if ($commandTimeout -lt 1) { $commandTimeout = 1 }
+        $result = Invoke-FlintCommand $request.root $parsed $request.command_invocation $commandTimeout -SessionId $request.session_id -GuardedResources $guarded
     }
     elseif ($request.name -ceq 'azure_request') { $result = Invoke-FlintAzureHttpRequest $request.root $request.session_id $parsed $request.command_invocation $azureAccessToken $request.timeout_sec }
     elseif ($request.name -ceq 'keyvault_list_secrets') { $result = Invoke-FlintKeyVaultListSecretsHttp $request.root $request.session_id $parsed $request.command_invocation $azureAccessToken $request.timeout_sec }
