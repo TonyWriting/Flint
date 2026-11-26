@@ -45,7 +45,8 @@ try {
     Assert-True ($result.status -eq 'output_limit') ('Apply the output limit before scanning stderr for a prompt.' + (Format-TestResult $result))
     # The limit covers stdout and stderr together, even when stderr alone is small and holds a prompt.
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value @(
-        "[Console]::Out.Write('o' * 800000)"
+        "[Console]::Out.Write('o' * 800000); [Console]::Out.Flush()"
+        'Start-Sleep -Milliseconds 1500'
         "[Console]::Error.WriteLine('e' * 300000)"
         "[Console]::Error.WriteLine('To sign in, use a web browser to open the page https://login.example.com/device and enter the code BOTH42 to authenticate.')"
         'Start-Sleep -Seconds 30'

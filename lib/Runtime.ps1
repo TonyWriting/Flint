@@ -51,6 +51,15 @@ function Start-FlintProcess {
     }
 }
 
+function Get-FlintCaptureBytes {
+    param([hashtable]$State)
+    $bytes = 0L
+    foreach ($capture in @($State.stdout_path, $State.stderr_path)) {
+        if (Test-Path -LiteralPath $capture) { $bytes += (Get-Item -LiteralPath $capture).Length }
+    }
+    return $bytes
+}
+
 function Test-FlintProcess {
     param([hashtable]$State, [hashtable]$Session)
     if ($State.result -or $State.status -ne 'ok') { return $true }
@@ -64,11 +73,7 @@ function Test-FlintProcess {
         if ((Test-FlintStopKey $Session) -and -not $Session.StopDeferred) { $State.status = 'stopped'; return $true }
     }
     if ((Get-FlintElapsedMs $State.started) -ge ($State.timeout_sec * 1000)) { $State.status = 'timeout'; return $true }
-    $bytes = 0L
-    foreach ($capture in @($State.stdout_path, $State.stderr_path)) {
-        if (Test-Path -LiteralPath $capture) { $bytes += (Get-Item -LiteralPath $capture).Length }
-    }
-    if ($bytes -gt 1048576) { $State.status = 'output_limit'; return $true }
+    if ((Get-FlintCaptureBytes $State) -gt 1048576) { $State.status = 'output_limit'; return $true }
     if ($State.prompt_pattern -and (Test-Path -LiteralPath $State.stderr_path)) {
         # A hidden process cannot answer a prompt; stop at the prompt instead of waiting for the timeout.
         $length = (Get-Item -LiteralPath $State.stderr_path).Length
@@ -77,7 +82,12 @@ function Test-FlintProcess {
             $State.stderr_checked = $length
             $text = ''
             try { $text = [string](Get-Content -LiteralPath $State.stderr_path -Raw -Encoding UTF8 -ErrorAction Stop) } catch { }
-            if ($text -match $State.prompt_pattern) { $State.status = 'prompted'; return $true }
+            if ($text -match $State.prompt_pattern) {
+                # Output can grow while the capture is read; the output limit still takes precedence over a prompt.
+                $State.status = 'prompted'
+                if ((Get-FlintCaptureBytes $State) -gt 1048576) { $State.status = 'output_limit' }
+                return $true
+            }
         }
     }
     return $false
