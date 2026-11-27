@@ -201,6 +201,6 @@ class FakeGit {
     Assert-Throws { Install-FlintSetup $url $gitConfig $gitRoot } '*git clone ended with error*Authentication failed*Sign in to Azure DevOps first: run "git clone https://dev.azure.com/contoso/Project/_git/Repo" once*'
     Assert-True ((Test-FlintPlugin (Join-Path $gitRoot 'example')).name -ceq 'example') 'A failed fetch keeps the installed plugins.'
     $env:PATH = $WorkRoot
-    Assert-Throws { Install-FlintSetup $url $gitConfig $gitRoot } '*git was not found on PATH*'
+    Assert-Throws { Install-FlintSetup $url $gitConfig $gitRoot } '*git was not found on PATH*from Software Center*new terminal*.zip*'
     Write-Host 'All setup tests passed.'
 } finally { $env:PATH = $savedPath; Remove-TestFixture }

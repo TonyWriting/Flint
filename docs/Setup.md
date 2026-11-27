@@ -62,7 +62,7 @@ Flint 先完整校验 `flint.ini` 和每个插件，发现问题就列出全部�
 
 **Azure DevOps URL** 支持 `https://dev.azure.com/<organization>/<project>/_git/<repository>` 和 `https://<organization>.visualstudio.com/[DefaultCollection/]<project>/_git/<repository>` 两种形式。`?path=` 指向配置文件夹本身，即 `flint.ini` 所在的目录；`version=GB<分支>` 或 `version=GT<标签>` 选择分支或标签，省略时使用默认分支，不支持指向单个 commit 的 URL。在 Azure DevOps 网页上切换到目标分支、打开配置文件夹后，直接复制地址栏即可：编码过的 `path`（如 `%2Fteam%2Fflint`）和带斜杠的分支名（如 `version=GBusers%2Falias%2Ffeature`）都能识别，URL 中的其他参数会被忽略。
 
-Flint 用 PATH 中的 `git` 只下载这个文件夹，认证沿用 Git Credential Manager 的登录。登录失败时，可以先在终端运行一次 `git clone <仓库地址>` 完成登录，或者在 Azure DevOps 网页上用 "Download as Zip" 下载文件夹，再把 zip 传给 `-Setup`。
+Flint 用 PATH 中的 `git` 只下载这个文件夹，认证沿用 Git Credential Manager 的登录。找不到 `git` 时，先从 Software Center 安装 Git for Windows。安装后在新的终端中重新运行 `-Setup`，新终端才能读到更新后的 PATH。登录失败时，可以先在终端运行一次 `git clone <仓库地址>` 完成登录，或者在 Azure DevOps 网页上用 "Download as Zip" 下载文件夹，再把 zip 传给 `-Setup`。
 
 **zip** 的根目录可以直接包含 `flint.ini`，也可以只有一个顶层文件夹，Azure DevOps 下载的就是这种格式。
 

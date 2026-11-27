@@ -72,7 +72,9 @@ function ConvertFrom-FlintSetupSource {
 
 function Resolve-FlintGitProgram {
     $command = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $command) { throw 'git was not found on PATH. Install Git for Windows, or download the setup folder as a .zip and pass it to -Setup.' }
+    if (-not $command) {
+        throw 'git was not found on PATH. Install Git for Windows from Software Center, then run -Setup again in a new terminal, which sees the updated PATH. Alternatively, download the setup folder as a .zip and pass it to -Setup.'
+    }
     if (-not $command.Source.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { throw 'git must resolve to git.exe; shell wrappers are not supported.' }
     return $command.Source
 }
