@@ -134,11 +134,28 @@ function Test-FlintCommandRule {
 
 function Get-FlintReadOnlyRuleSource {
     param([hashtable]$Session, $Invocation)
-    # Rules are validated once at session start; the source names the core set or the plugin that supplied the match.
-    foreach ($entry in @($Session.CommandRules[[string]$Invocation.executor])) {
-        if ($entry -and (Test-FlintCommandRule $entry.rule $Invocation.arguments)) { return $entry.source }
+    # Rules are validated once at session start; the source names the core set or the plugins that supplied the match.
+    $sources = @()
+    foreach ($part in @(Split-FlintCommandRead ([string]$Invocation.executor) @($Invocation.arguments))) {
+        $source = $null
+        foreach ($entry in @($Session.CommandRules[[string]$Invocation.executor])) {
+            if ($entry -and (Test-FlintCommandRule $entry.rule $part.arguments)) { $source = $entry.source; break }
+        }
+        if (-not $source) { return $null }
+        if ($sources -cnotcontains $source) { $sources += $source }
     }
-    return $null
+    return $sources -join ','
+}
+
+function Read-FlintYesNo {
+    # A stray Enter must not decide, so the question repeats until the answer is y or n.
+    while ($true) {
+        try { $answer = Read-Host 'y/n' } catch { return $null }
+        if ($null -eq $answer) { return $null }
+        $answer = $answer.Trim()
+        if ($answer -eq 'y' -or $answer -eq 'n') { return $answer.ToLowerInvariant() }
+        Write-Host 'Type y or n.' -ForegroundColor Yellow
+    }
 }
 
 function Read-FlintDirectoryApproval {
@@ -149,7 +166,7 @@ function Read-FlintDirectoryApproval {
     Write-Host ''
     Write-Host (Protect-FlintText $Session ('Operation: ' + $Operation + ' ' + $Target)) -ForegroundColor Yellow
     Write-Host (Protect-FlintText $Session ('Allow writes in this directory and its descendants for this session: ' + $Directory)) -ForegroundColor Yellow
-    try { return Read-Host 'y/n (default n)' } catch { return $null }
+    return Read-FlintYesNo
 }
 
 function Resolve-FlintFilePermission {
@@ -190,7 +207,7 @@ function Read-FlintCommandApproval {
         if ($Invocation.environment[$name]) { Write-Host (Protect-FlintText $Session ($name + ': ' + $Invocation.environment[$name])) }
     }
     Write-Host 'This command is not on the read-only list and may make changes. Allow this exact invocation for this session?' -ForegroundColor Yellow
-    try { return Read-Host 'y/n (default n)' } catch { return $null }
+    return Read-FlintYesNo
 }
 
 function Read-FlintSignInApproval {
@@ -202,7 +219,7 @@ function Read-FlintSignInApproval {
     Write-Host 'kubectl needs you to sign in: its kubeconfig credential plugin asked for an interactive sign-in.' -ForegroundColor Yellow
     Write-Host (Protect-FlintText $Session ('Flint can run this read here, and the plugin shows how to sign in: kubectl ' + ($Arguments -join ' '))) -ForegroundColor Yellow
     Write-Host 'Sign in now? The plugin keeps the sign-in until it expires.' -ForegroundColor Yellow
-    try { return Read-Host 'y/n (default n)' } catch { return $null }
+    return Read-FlintYesNo
 }
 
 function Resolve-FlintCommandPermission {

@@ -32,8 +32,29 @@ try {
     $logs = @('logs', 'a', '--context', 'cluster', '--namespace', 'ns', '--tail', '200', '--previous', '--container', 'app')
     Assert-True ((Invoke-CommandFixture $logs).status -eq 'ok') 'Read a bounded log tail of one pod without approval.'
     Assert-True ((Invoke-CommandFixture @('get', 'pods', 'a', 'b', '--context', 'cluster', '--namespace', 'ns')).status -eq 'ok') 'Read several named objects of one kind without approval.'
+    foreach ($tokens in @(
+        @{ a = @('get', 'pods,services', '--context', 'cluster', '--namespace', 'ns', '--output', 'json') },
+        @{ a = @('get', 'pods,services', 'a', 'b', '--context', 'cluster', '--namespace', 'ns') },
+        @{ a = @('get', 'deployments/a', 'services/a', 'services/a-lb', '--context', 'cluster', '--namespace', 'ns', '--output', 'json') },
+        @{ a = @('describe', 'pods/a', '--context', 'cluster', '--namespace', 'ns') }
+    )) { Assert-True ((Invoke-CommandFixture $tokens.a).status -eq 'ok') ('Read several kinds, or TYPE/NAME pairs, when every kind matches a rule: ' + ($tokens.a -join ' ')) }
+    $combinedCall = @{ name = 'run_command'; arguments = (ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = @('get', 'deployments/a', 'services/a', '--context', 'cluster', '--namespace', 'ns'); purpose = 'Read two kinds.' }) }
+    Assert-True ($null -ne (Get-FlintParallelCall $Session $combinedCall)) 'Combined reads join the parallel scheduler.'
     Assert-True ($Prompts -eq 0) 'Never ask for fixed reads.'
-    $tooMany = @(@('get', 'pods') + @(foreach ($index in 1..11) { 'pod' + $index }) + @('--context', 'cluster', '--namespace', 'ns'))
+    $pairs = @(@('get') + @(foreach ($index in 1..11) { 'pods/pod' + $index }) + @('--context', 'cluster', '--namespace', 'ns'))
+    $script:Answers = @('n', 'n', 'n', 'n', 'n', 'n', 'n'); $count = $Executions.Count
+    foreach ($tokens in @(
+        @{ a = @('get', 'pods,secrets', '--context', 'cluster', '--namespace', 'ns') },
+        @{ a = @('get', 'pods,', '--context', 'cluster', '--namespace', 'ns') },
+        @{ a = @('get', 'pods,services', '--context', 'cluster') },
+        @{ a = @('get', 'pods/a', 'b', '--context', 'cluster', '--namespace', 'ns') },
+        @{ a = @('get', 'pods/a/b', '--context', 'cluster', '--namespace', 'ns') },
+        @{ a = @('get', 'pods,services/a', '--context', 'cluster', '--namespace', 'ns') },
+        @{ a = $pairs }
+    )) { Assert-True ((Invoke-CommandFixture $tokens.a).status -eq 'denied') ('A combined read needs approval unless every part matches a rule: ' + ($tokens.a -join ' ')) }
+    Assert-True ($Executions.Count -eq $count -and $Prompts -eq 7) 'Combined reads outside the rules never run without approval.'
+    $script:Prompts = 0
+    $tooMany = @(@('get', 'pods') + @(foreach ($index in 1..11) { 'pod' + $index }) + @('--context', 'cluster', '--namespace', 'ns')); $count = $Executions.Count
     $script:Answers = @('n', 'n', 'n', 'n', 'n', 'n', 'n', 'n')
     foreach ($tokens in @(
         @{ a = ($logs + @('--follow')) },
@@ -45,7 +66,7 @@ try {
         @{ a = ($showA + @('--context', 'other')) },
         @{ a = @('get', '--context', 'delete', 'pods', '--namespace', 'ns') }
     )) { Assert-True ((Invoke-CommandFixture $tokens.a).status -eq 'denied') 'Do not infer safety from a prefix, verb, extra flag, or duplicate option.' }
-    Assert-True ($Executions.Count -eq 5) 'Denied commands never reach the worker.'
+    Assert-True ($Executions.Count -eq $count) 'Denied commands never reach the worker.'
     Assert-True (@($Session.Approvals.kubectl).Count -eq 0) 'Declining commands never records an approval.'
 
     $script:Answers = @('n')
@@ -118,11 +139,24 @@ try {
     . (Join-Path $RepoRoot 'lib\Permissions.ps1')
     $Session.Ui.Live = $false; $count = $Executions.Count
     Assert-True ((Invoke-CommandFixture @('needs-interaction')).status -eq 'approval_required' -and $Executions.Count -eq $count) 'Noninteractive callers cannot manufacture consent.'
-    function Read-Host { param($Prompt); return 'yes' }
+    $script:Replies = @(); $script:Reads = 0; $script:PromptTexts = @()
+    function Read-Host {
+        param($Prompt)
+        $script:Reads++; $script:PromptTexts += $Prompt
+        if ($script:Replies.Count -eq 0) { throw 'No reply is scripted.' }
+        $reply = $script:Replies[0]; $script:Replies = @($script:Replies | Select-Object -Skip 1)
+        return $reply
+    }
     $Session.Ui.Live = $true
-    Assert-True ((Invoke-CommandFixture @('needs-y')).status -eq 'denied') 'Only explicit y grants approval.'
-    function Read-Host { param($Prompt); return 'y' }
-    Assert-True ((Invoke-CommandFixture @('needs-y')).status -eq 'ok') 'Read consent through the main-process terminal prompt.'
+    $script:Replies = @('', 'yes', ' n ')
+    $messages = @(& { Invoke-CommandFixture @('needs-y') } 6>&1)
+    $screen = ($messages | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    Assert-True ($messages[-1].status -eq 'denied' -and $script:Reads -eq 3 -and $screen.Contains('Type y or n.')) 'Ask again after a bare Enter or another reply, until the answer is y or n.'
+    Assert-True (@($script:PromptTexts | Where-Object { $_ -cne 'y/n' }).Count -eq 0) 'Offer no default answer.'
+    $script:Replies = @('Y'); $script:Reads = 0
+    Assert-True ((Invoke-CommandFixture @('needs-y')).status -eq 'ok' -and $script:Reads -eq 1) 'Read consent through the main-process terminal prompt.'
+    $script:Reads = 0
+    Assert-True ((Invoke-CommandFixture @('needs-z')).status -eq 'approval_required' -and $script:Reads -eq 1) 'Stop asking and take no action when the prompt cannot read.'
     $Session.Ui.Live = $false
     $events = @(Get-TestEvents)
     Assert-True (@($events | Where-Object { $_.event -eq 'command_approval_decided' -and $_.data.allowed }).Count -gt 0) 'Record user decisions in the trajectory.'

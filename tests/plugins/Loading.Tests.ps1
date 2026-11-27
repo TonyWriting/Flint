@@ -54,6 +54,13 @@ try {
     $call = @{ name = 'run_command'; arguments = ConvertTo-Json -Compress @{ executor = 'kubectl'; arguments = $read; purpose = 'Inspect the scoped widget.' } }
     $plan = Get-FlintParallelCall $Session $call
     Assert-True ($null -ne $plan -and $plan.rule_source -ceq 'plugin:example') 'Plugin reads join the parallel scheduler.'
+    $mixed = @('get', 'widgets.example.io,pods', '--context', 'cluster', '--namespace', 'team', '--output', 'json')
+    Assert-True ((Invoke-WidgetCommand $mixed).status -eq 'ok' -and $Prompts -eq 0) 'Read plugin and standard kinds together when each kind matches a rule.'
+    $events = @(Get-TestEvents)
+    Assert-True (@($events | Where-Object { $_.event -eq 'command_permission' -and $_.data.rule_source -ceq 'plugin:example,core' }).Count -eq 1) 'Attribute a combined read to every rule set it used.'
+    $pairs = @('get', 'widgets.example.io/a', 'widgets.example.io/b', '--context', 'cluster', '--namespace', 'team')
+    Assert-True ((Invoke-WidgetCommand $pairs).status -eq 'denied' -and $Prompts -eq 1) 'TYPE/NAME pairs of one kind count against that rule name limit.'
+    $script:Prompts = 0
     $count = $Executions
     foreach ($tokens in @(
         @('get', 'widgets.example.io', '--namespace', 'team'),

@@ -45,7 +45,7 @@ function Read-FlintAzureApproval {
     Write-Host (Protect-FlintText $Session ($Invocation.method + ' ' + $Invocation.uri)) -ForegroundColor Yellow
     if ($Invocation.body) { Write-Host (Protect-FlintText $Session $Invocation.body) -ForegroundColor Yellow }
     Write-Host 'This request is not classified as read-only and may change Azure resources. Allow this exact request for this session?' -ForegroundColor Yellow
-    try { return Read-Host 'y/n (default n)' } catch { return $null }
+    return Read-FlintYesNo
 }
 
 function Complete-FlintAzureResult {
