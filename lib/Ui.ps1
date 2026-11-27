@@ -53,7 +53,11 @@ function Show-FlintHelp {
 function Get-FlintToolLabel {
     param([string]$Name, $ToolArguments, [switch]$Completed)
     switch ($Name) {
-        'read_file' { if ($Completed) { return 'Read ' + $ToolArguments.path }; return 'Reading file' }
+        'read_file' {
+            if (-not $Completed) { return 'Reading file' }
+            if ($ToolArguments.json_path) { return 'Read ' + $ToolArguments.path + ' at ' + $ToolArguments.json_path }
+            return 'Read ' + $ToolArguments.path
+        }
         'list_files' { if ($Completed) { return 'Listed files in ' + $ToolArguments.path }; return 'Listing files' }
         'search_text' { if ($Completed) { return 'Searched ' + $ToolArguments.path }; return 'Searching text' }
         'write_file' { if ($Completed) { return 'Wrote ' + $ToolArguments.path }; return 'Writing file' }

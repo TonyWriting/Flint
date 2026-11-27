@@ -25,7 +25,7 @@ try {
     $unicode = ConvertFrom-Json '"\u4f60\u597d"'
     Set-Content -LiteralPath (Join-Path $WorkRoot 'note.txt') -Value "alpha $unicode test-api-key password=hidden-value" -Encoding UTF8 -NoNewline
     $reasoning = @{ type = 'reasoning'; id = 'rs_1'; summary = @(); encrypted_content = 'opaque-reasoning' }
-    $read = @{ type = 'function_call'; call_id = 'call_1'; name = 'read_file'; arguments = '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200}' }
+    $read = @{ type = 'function_call'; call_id = 'call_1'; name = 'read_file'; arguments = '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200,"json_path":null}' }
     $invalid = @{ type = 'function_call'; call_id = 'call_2'; name = 'read_file'; arguments = '{broken' }
     $edit = @{ type = 'function_call'; call_id = 'call_3'; name = 'edit_file'; arguments = '{"path":"note.txt","old_str":"alpha","new_str":"beta"}' }
     $write = @{ type = 'function_call'; call_id = 'call_4'; name = 'write_file'; arguments = '{"path":"report.md","content":"# Report\n\nDone."}' }

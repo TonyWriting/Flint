@@ -22,7 +22,7 @@ function Invoke-TestTool {
     param([string]$Name, [hashtable]$ToolArguments)
     if ($Name -in @('run_command', 'azure_request') -and -not $ToolArguments.ContainsKey('purpose')) { $ToolArguments.purpose = 'Execute the scoped offline test operation.' }
     if ($Name -eq 'read_file') {
-        foreach ($entry in @(@{ key = 'start_line'; value = 1 }, @{ key = 'start_column'; value = 1 }, @{ key = 'max_lines'; value = 200 })) {
+        foreach ($entry in @(@{ key = 'start_line'; value = 1 }, @{ key = 'start_column'; value = 1 }, @{ key = 'max_lines'; value = 200 }, @{ key = 'json_path'; value = $null })) {
             if (-not $ToolArguments.ContainsKey($entry.key)) { $ToolArguments[$entry.key] = $entry.value }
         }
     }

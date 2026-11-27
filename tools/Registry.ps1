@@ -1,6 +1,6 @@
 function Get-AgentTools {
     $descriptions = [ordered]@{
-        read_file = 'Read a local text-file page; saved Azure responses use path=result_path without repeating HTTP. Returns at most 32768 UTF-16 characters; when truncated, continue with next_line/next_column. Large-file reads normalize line endings to LF. Files inside the Flint installation, including .git and .flint, and this session''s results are readable; flint.ini and credential files never are. Other internal-path protections apply; symlinks and junctions are rejected. Output is redacted.'
+        read_file = 'Read a local text-file page; saved Azure responses use path=result_path without repeating HTTP. Returns at most 32768 UTF-16 characters; when truncated, continue with next_line/next_column. Large-file reads normalize line endings to LF. Files inside the Flint installation, including .git and .flint, and this session''s results are readable; flint.ini and credential files never are. Other internal-path protections apply; symlinks and junctions are rejected. Output is redacted. For part of a JSON file, such as a saved kubectl or Azure result, use json_path instead of searching for line numbers.'
         list_files = 'List one directory in name order, up to 200 entries per page. When truncated, continue with next_offset using the same path and name_filter. Directory names end with /. Listing is not recursive; directory changes can shift offsets. Directories inside the Flint installation are allowed, except credential directories such as .ssh.'
         write_file = 'Create or overwrite a UTF-8 text file. Read existing content first; prefer edit_file for targeted changes. The parent must exist. Writes inside the working directory run directly; external writes require session directory authorization.'
         edit_file = 'Replace exactly one occurrence in an existing UTF-8 file; read it first. The resulting file is limited to 65536 characters. External writes require session directory authorization.'
@@ -13,7 +13,8 @@ function Get-AgentTools {
             $properties.start_line = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2147483647; description = 'First line to read, 1-based. Start with 1.' }
             $properties.start_column = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2147483647; description = 'First UTF-16 character of the first line, 1-based. Start with 1.' }
             $properties.max_lines = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2000; description = 'Maximum lines to return. Normally use 230.' }
-            $required += @('start_line', 'start_column', 'max_lines')
+            $properties.json_path = [ordered]@{ type = @('string', 'null'); description = 'Null for a text page. For a JSON file, property names separated by dots, each optionally followed by [index], such as status or items[0].status.conditions: returns only that value as compact JSON on one line. Use start_line 1, and continue a long value with next_column.' }
+            $required += @('start_line', 'start_column', 'max_lines', 'json_path')
         }
         if ($name -eq 'list_files') {
             $properties.name_filter = [ordered]@{ type = 'string'; minLength = 1; maxLength = 255; description = 'Case-insensitive filename wildcard, such as "*" or "*.log". No directory separators.' }
@@ -49,7 +50,7 @@ function Get-AgentTools {
     }
     [ordered]@{
         type = 'function'; name = 'run_command'; strict = $true
-        description = 'Run kubectl with literal arguments, including custom resources. Reviewed reads, from the installation and installed plugins, run automatically; other calls require exact session approval. Changes require explicit --context and --namespace for namespaced resources. Patches to resources guarded by an installed plugin require one named resource, --type=json, a leading /metadata/resourceVersion test and changes below /spec/. Read actual state after writes; exit code 0 only confirms the command completed. Nonempty output is saved at result_path and returned whole up to 16384 characters, otherwise as a preview with preview_truncated; stderr_result_path holds separate warnings/errors when present. capture_incomplete means capture stopped early: narrow the query. Use read_file/search_text for saved results and azure_request for Azure ARM.'
+        description = 'Run kubectl with literal arguments, including custom resources. Reviewed reads, from the installation and installed plugins, run automatically; other calls require exact session approval. Changes require explicit --context and --namespace for namespaced resources. Patches to resources guarded by an installed plugin require one named resource, --type=json, a leading /metadata/resourceVersion test and changes below /spec/. Read actual state after writes; exit code 0 only confirms the command completed. Nonempty output is saved at result_path and returned whole up to 16384 characters, otherwise as a preview with preview_truncated; stderr_result_path holds separate warnings/errors when present. capture_incomplete means capture stopped early: narrow the query. Use read_file, with json_path for part of saved JSON, or search_text for saved results, and azure_request for Azure ARM.'
         parameters = [ordered]@{
             type = 'object'; additionalProperties = $false; required = @('executor', 'arguments', 'purpose')
             properties = [ordered]@{
@@ -89,6 +90,10 @@ function ConvertTo-FlintToolArguments {
         $property = $tool[0].parameters.properties[$key]
         if ($property.type -eq 'integer') {
             if (($parsed.$key -isnot [int] -and $parsed.$key -isnot [long]) -or $parsed.$key -lt $property.minimum -or $parsed.$key -gt $property.maximum) { throw 'Invalid pagination parameters.' }
+        } elseif ($Name -ceq 'read_file' -and $key -ceq 'json_path') {
+            if ($null -ne $parsed.json_path -and ($parsed.json_path -isnot [string] -or $parsed.json_path.Length -lt 1 -or $parsed.json_path.Length -gt 1024 -or $parsed.json_path -match '[\x00-\x1f\x7f]')) {
+                throw 'Use null or a single-line json_path of 1 to 1024 characters.'
+            }
         } elseif ($Name -ceq 'run_command' -and $key -ceq 'arguments') {
             if ($parsed.arguments -isnot [array] -or $parsed.arguments.Count -lt 1 -or $parsed.arguments.Count -gt 128) { throw 'Command arguments must be an array of 1 to 128 strings.' }
             foreach ($argument in $parsed.arguments) {

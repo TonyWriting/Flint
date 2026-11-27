@@ -71,5 +71,29 @@ try {
     $missing = Invoke-TestTool read_file @{ path = (Join-Path (Split-Path $saved.result_path -Parent) ([guid]::NewGuid().ToString('N') + '.json')) }
     Assert-True ($missing.status -eq 'error' -and $missing.output -like '*does not exist*') 'Report missing result files without repeating a cloud request.'
     Assert-True (@(Get-ChildItem -LiteralPath (Get-FlintResultDirectory $Session.Root $Session.Id) -Filter *.tmp).Count -eq 0) 'Leave no temporary response files.'
+
+    # json_path returns one value of a JSON file as compact JSON, through the real worker.
+    $item = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[1]' }
+    $value = ConvertFrom-Json -InputObject $item.output
+    Assert-True ($item.status -eq 'ok' -and -not $item.truncated -and -not $item.output.Contains("`n") -and $value.name -ceq 'last-record-marker' -and $value.password -ceq '[redacted]') ('Select one item of a saved result. ' + $item.output)
+    Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[1].name' }).output -ceq '"last-record-marker"') 'Select a nested value.'
+    $page = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[0].details' }
+    Assert-True ($page.truncated -and $page.next_line -eq 1 -and $page.output.Length -eq 32768 -and $page.value_chars -eq 300002) 'Page a long value within the context budget.'
+    $joined = $page.output
+    while ($page.truncated) {
+        $page = Invoke-FlintFileTool $Session.Root read_file @{ path = $saved.result_path; json_path = 'value[0].details'; start_line = 1; start_column = $page.next_column; max_lines = 230 } $Session.ProtectedPaths -SessionId $Session.Id
+        $joined += $page.output
+    }
+    Assert-True ($joined -ceq ('"' + ('x' * 300000) + '"')) 'Continue a long value by column without gaps.'
+    $missing = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[1].nmae' }
+    Assert-True ($missing.status -eq 'error' -and $missing.output -like '*$.value`[1`] has no property nmae. Properties: *' -and $missing.output -like '*password*') ('Name the available properties when a path segment is missing. ' + $missing.output)
+    $range = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[5]' }
+    Assert-True ($range.status -eq 'error' -and $range.output -like '*$.value has 2 items*') 'Report the array length for an index out of range.'
+    Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value..name' }).output -like '*property names separated by dots*') 'Reject a malformed path.'
+    Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'nextLink'; start_line = 2 }).output -like '*use start_line 1*') 'Page a selected value by column only.'
+    Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = ('nextLink' + [char]10) }).output -like '*single-line json_path*') 'Validate json_path before the worker runs.'
+    Set-Content -LiteralPath (Join-Path $Session.Root 'plain.txt') -Value 'not json' -Encoding UTF8
+    $plain = Invoke-TestTool read_file @{ path = 'plain.txt'; json_path = 'status' }
+    Assert-True ($plain.status -eq 'error' -and $plain.output -like '*needs a JSON file*') 'Explain that json_path needs a JSON file.'
     Write-Host 'All saved-result tests passed.'
 } finally { Remove-TestFixture }
