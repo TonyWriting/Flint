@@ -12,7 +12,7 @@ function Get-AgentTools {
         if ($name -eq 'read_file') {
             $properties.start_line = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2147483647; description = 'First line to read, 1-based. Start with 1.' }
             $properties.start_column = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2147483647; description = 'First UTF-16 character of the first line, 1-based. Start with 1.' }
-            $properties.max_lines = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2000; description = 'Maximum lines to return. Normally use 200.' }
+            $properties.max_lines = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2000; description = 'Maximum lines to return. Normally use 230.' }
             $required += @('start_line', 'start_column', 'max_lines')
         }
         if ($name -eq 'list_files') {
