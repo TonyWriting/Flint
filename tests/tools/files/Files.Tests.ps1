@@ -4,8 +4,9 @@ function Read-Host { throw 'Workspace file tools must not request interactive co
 try {
     $unicode = ConvertFrom-Json '"\u4f60\u597d"'
     $text = "alpha`r`n$unicode`r`nalpha"
-    Assert-True ((Invoke-TestTool write_file @{ path = 'note.txt'; content = $text }).status -eq 'ok') 'Create a UTF-8 file directly.'
-    Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).output -ceq $text) 'Round-trip Unicode and line endings through the worker.'
+    $created = Invoke-TestTool write_file @{ path = 'note.txt'; content = $text }
+    Assert-True ($created.status -eq 'ok' -and $created.output -ceq 'Created, read back and verified: note.txt') ('Create a UTF-8 file directly and say so. ' + $created.output)
+    Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).output -ceq $text) 'Round-trip Unicode and line endings.'
     foreach ($example in @(
         @{ old = 'alpha'; new = 'beta'; pattern = '*more than once*' },
         @{ old = ''; new = 'overwrite'; pattern = '*nonempty*' },
@@ -14,10 +15,22 @@ try {
         $result = Invoke-TestTool edit_file @{ path = 'note.txt'; old_str = $example.old; new_str = $example.new }
         Assert-True ($result.status -eq 'error' -and $result.output -like $example.pattern) 'Reject ambiguous or stale replacement text.'
     }
-    Assert-True ((Invoke-TestTool edit_file @{ path = 'note.txt'; old_str = "alpha`r`n$unicode"; new_str = "beta`r`n$unicode" }).status -eq 'ok') 'Verify an exact multiline replacement.'
+    $edited = Invoke-TestTool edit_file @{ path = 'note.txt'; old_str = "alpha`r`n$unicode"; new_str = "beta`r`n$unicode" }
+    Assert-True ($edited.status -eq 'ok' -and $edited.output -ceq 'Edited, read back and verified: note.txt') 'Verify an exact multiline replacement and say so.'
     Set-Content -LiteralPath (Join-Path $WorkRoot 'wipe.txt') -Value 'remove me' -Encoding UTF8 -NoNewline
     Assert-True ((Invoke-TestTool edit_file @{ path = 'wipe.txt'; old_str = 'remove me'; new_str = '' }).status -eq 'ok') 'Verify an edit that makes the file empty.'
-    Assert-True ((Invoke-TestTool write_file @{ path = 'note.txt'; content = "replacement`n$unicode" }).status -eq 'ok') 'Overwrite a complete file without supplying its old content.'
+    $replaced = Invoke-TestTool write_file @{ path = 'note.txt'; content = "replacement`n$unicode" }
+    Assert-True ($replaced.status -eq 'ok' -and $replaced.output -ceq ('Replaced an existing file of ' + ("beta`r`n$unicode`r`nalpha").Length + ' characters, read back and verified: note.txt')) ('Overwrite a complete file and report the replaced size. ' + $replaced.output)
+    # File pages and directory pages run in the main process; a search still needs a worker.
+    $originalWorker = $Session.WorkerPath
+    $Session.WorkerPath = Join-Path $TestRoot 'missing-worker.ps1'
+    try {
+        $inProcess = Invoke-TestTool read_file @{ path = 'note.txt' }
+        Assert-True ($inProcess.status -eq 'ok' -and (Invoke-TestTool list_files @{ path = '.' }).status -eq 'ok') 'Read files and list directories without a worker process.'
+        Assert-True ((Invoke-TestTool search_text @{ path = 'note.txt'; keyword = 'replacement' }).status -ne 'ok') 'Keep searches in a worker process.'
+    } finally { $Session.WorkerPath = $originalWorker }
+    $finished = @(Get-TestEvents | Where-Object { $_.event -eq 'tool_finished' -and $_.data.name -eq 'read_file' })[-1]
+    Assert-True ($null -ne $finished.timing.in_process_ms -and $null -eq $finished.timing.worker) 'Record the in-process time of a read.'
     Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).output -ceq "replacement`n$unicode") 'Verify the complete replacement.'
     Assert-True ((Invoke-TestTool write_file @{ path = 'note.txt'; content = '' }).status -eq 'ok') 'Allow an explicit empty replacement.'
     Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).output -ceq '') 'Verify the existing file was emptied.'
