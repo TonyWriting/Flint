@@ -72,19 +72,35 @@ try {
     Assert-True ($missing.status -eq 'error' -and $missing.output -like '*does not exist*') 'Report missing result files without repeating a cloud request.'
     Assert-True (@(Get-ChildItem -LiteralPath (Get-FlintResultDirectory $Session.Root $Session.Id) -Filter *.tmp).Count -eq 0) 'Leave no temporary response files.'
 
-    # json_path returns one value of a JSON file as compact JSON, through the real worker.
+    # json_path returns one value of a JSON file, through the real worker: a string as its text, other values as compact JSON.
     $item = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[1]' }
     $value = ConvertFrom-Json -InputObject $item.output
-    Assert-True ($item.status -eq 'ok' -and -not $item.truncated -and -not $item.output.Contains("`n") -and $value.name -ceq 'last-record-marker' -and $value.password -ceq '[redacted]') ('Select one item of a saved result. ' + $item.output)
-    Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[1].name' }).output -ceq '"last-record-marker"') 'Select a nested value.'
+    Assert-True ($item.status -eq 'ok' -and $item.value_type -eq 'object' -and -not $item.truncated -and -not $item.output.Contains("`n") -and $value.name -ceq 'last-record-marker' -and $value.password -ceq '[redacted]') ('Select one item of a saved result. ' + $item.output)
+    $name = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[1].name' }
+    Assert-True ($name.output -ceq 'last-record-marker' -and $name.value_type -eq 'string') 'Return a selected string as its text.'
     $page = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[0].details' }
-    Assert-True ($page.truncated -and $page.next_line -eq 1 -and $page.output.Length -eq 32768 -and $page.value_chars -eq 300002) 'Page a long value within the context budget.'
+    Assert-True ($page.truncated -and $page.next_line -eq 1 -and $page.output.Length -eq 32768 -and $page.value_chars -eq 300000) 'Page a long value within the context budget.'
     $joined = $page.output
     while ($page.truncated) {
         $page = Invoke-FlintFileTool $Session.Root read_file @{ path = $saved.result_path; json_path = 'value[0].details'; start_line = 1; start_column = $page.next_column; max_lines = 230 } $Session.ProtectedPaths -SessionId $Session.Id
         $joined += $page.output
     }
-    Assert-True ($joined -ceq ('"' + ('x' * 300000) + '"')) 'Continue a long value by column without gaps.'
+    Assert-True ($joined -ceq ('x' * 300000)) 'Continue a long value by column without gaps.'
+    # A local JSON file is not redacted before it is read, so selection must not lose the field that holds a credential.
+    Set-Content -LiteralPath (Join-Path $Session.Root 'settings.json') -Encoding UTF8 -Value '{"settings":{"password":"hunter2","token":{"inner":"tok-private"}},"message":"password=hidden","notes":["password=hidden","password=\"[redacted]\""]}'
+    foreach ($selection in @('settings.password', 'settings.token.inner')) {
+        $secret = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = $selection }
+        Assert-True ($secret.status -eq 'ok' -and $secret.output -ceq '[redacted]') ('Redact a value selected below a credential field: ' + $selection + ' -> ' + $secret.output)
+    }
+    $message = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = 'message' }
+    Assert-True ($message.value_type -eq 'string' -and -not $message.output.Contains('hidden')) ('Redact a selected string like any text. ' + $message.output)
+    $notes = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = 'notes' }
+    # Windows PowerShell returns a decoded JSON array as one object, so it is assigned without @().
+    $decodedNotes = ConvertFrom-Json -InputObject $notes.output
+    Assert-True ($notes.value_type -eq 'array' -and $decodedNotes.Count -eq 2 -and -not $notes.output.Contains('hidden')) ('Keep selected JSON valid while redacting it. ' + $notes.output)
+    $whole = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = 'settings' }
+    $decodedWhole = ConvertFrom-Json -InputObject $whole.output
+    Assert-True ($decodedWhole.password -ceq '[redacted]' -and $decodedWhole.token -ceq '[redacted]' -and -not $whole.output.Contains('tok-private')) ('Redact credential fields inside a selected object. ' + $whole.output)
     $missing = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[1].nmae' }
     Assert-True ($missing.status -eq 'error' -and $missing.output -like '*$.value`[1`] has no property nmae. Properties: *' -and $missing.output -like '*password*') ('Name the available properties when a path segment is missing. ' + $missing.output)
     $range = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[5]' }

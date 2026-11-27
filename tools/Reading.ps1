@@ -69,7 +69,7 @@ function Select-FlintJsonValue {
     if ($path -cnotmatch '^(?:\.[^.\[\]]+|\[\d{1,9}\])+$') {
         throw 'json_path must be property names separated by dots, each optionally followed by [index], such as status or items[0].status.conditions.'
     }
-    $current = $Value; $at = '$'
+    $current = $Value; $at = '$'; $sensitive = $false; $secretName = Get-FlintSecretNamePattern
     foreach ($token in @($path -split '(?=[.\[])' | Where-Object { $_ })) {
         if ($token.StartsWith('[')) {
             $index = [int]$token.Substring(1, $token.Length - 2)
@@ -86,9 +86,12 @@ function Select-FlintJsonValue {
                 throw ($at + ' has no property ' + $name + '. Properties: ' + $names)
             }
             $current = $property[0].Value
+            # Selection drops the field names above the value, so a credential field on the path redacts it here.
+            if ($name -match $secretName -or (Protect-FlintText $null $name) -match $secretName) { $sensitive = $true }
         }
         $at += $token
     }
+    if ($sensitive) { return '[redacted]' }
     if ($current -is [array]) { return ,$current }
     return $current
 }
@@ -105,17 +108,26 @@ function Read-FlintJsonValue {
     catch { throw 'json_path needs a JSON file. Read this file without json_path.' }
     $selected = Select-FlintJsonValue $document $ToolArguments.json_path
     Assert-FlintResultJsonDepth $selected
-    # Compact JSON is one line; pages continue by column like any long line.
-    $json = ConvertTo-Json -InputObject $selected -Depth 100 -Compress
+    # A string comes back as its text, which redaction treats like any text; other values are compact JSON.
+    # Either way the value is one page sequence that continues by column like a long line.
+    if ($selected -is [string]) { $text = $selected; $type = 'string' }
+    else {
+        $text = ConvertTo-Json -InputObject $selected -Depth 100 -Compress
+        if ($null -eq $selected) { $type = 'null' }
+        elseif ($selected -is [array]) { $type = 'array' }
+        elseif ($selected -is [pscustomobject]) { $type = 'object' }
+        elseif ($selected -is [bool]) { $type = 'boolean' }
+        else { $type = 'number' }
+    }
     $state = @{
         output = ''; line = 0; lines_returned = 0; truncated = $false; next_line = $null; next_column = $null
         start_line = 1; start_column = $ToolArguments.start_column; max_lines = 1
     }
-    $null = Add-FlintReadLine $state $json
+    $null = Add-FlintReadLine $state $text
     return @{
         status = 'ok'; exit_code = 0; output = $state.output; retryable = $false; duration_ms = 0
         truncated = $state.truncated; next_line = $state.next_line; next_column = $state.next_column
-        start_line = 1; start_column = $state.start_column; json_path = $ToolArguments.json_path; value_chars = $json.Length
-        size_bytes = $entry.Length
+        start_line = 1; start_column = $state.start_column; json_path = $ToolArguments.json_path; value_type = $type
+        value_chars = $text.Length; size_bytes = $entry.Length
     }
 }

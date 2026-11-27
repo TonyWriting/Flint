@@ -5,6 +5,11 @@ function Get-FlintSessionSecrets {
     return @(@($Session.ApiKey, $Session.Azure.AccessToken) | Where-Object { $_ })
 }
 
+function Get-FlintSecretNamePattern {
+    # Field names whose values are always redacted, whatever the value looks like.
+    return '(?i)(?:^|[_-])(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|password|passwd|client[-_]?secret|secret|accountkey|sig|signature|authorization)$'
+}
+
 function Test-FlintSecretInJson {
     param([hashtable]$Session, [AllowEmptyString()][string]$Json)
     # Checks serialized data that was redacted when it entered the session. A credential inside a JSON string
@@ -108,7 +113,7 @@ function Protect-FlintValue {
         $safe = [ordered]@{}
         $names = @($Value.PSObject.Properties | ForEach-Object { $_.Name })
         if ($Value -is [System.Collections.IDictionary]) { $names = @($Value.Keys) }
-        $secretName = '(?i)(?:^|[_-])(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|password|passwd|client[-_]?secret|secret|accountkey|sig|signature|authorization)$'
+        $secretName = Get-FlintSecretNamePattern
         foreach ($name in $names) {
             $safeName = Protect-FlintText $Session $name $Secrets
             if (-not $Untrusted -and $name -ceq 'encrypted_content' -and $Value.type -ceq 'reasoning') {
