@@ -74,7 +74,7 @@ function Invoke-WebRequest {
     $command = @{ executor = 'kubectl'; arguments = @('delete', 'pod', 'pod-a', '--context', 'cluster-a', '--namespace', 'ns-a'); purpose = 'Delete pod-a in ns-a on cluster-a; its controller may recreate it.' }
     $messages = @(& { Invoke-TestTool run_command $command } 6>&1)
     $screen = ($messages | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
-    Assert-True ($messages[-1].status -eq 'denied' -and $screen.Contains('Purpose (model-provided): ' + $command.purpose) -and $screen.Contains('pod-a') -and $screen.Contains('Executable:')) 'Show the same explanation for unclassified native commands.'
+    Assert-True ($messages[-1].status -eq 'denied' -and $screen.Contains('Purpose (model-provided): ' + $command.purpose) -and $screen.Contains('pod-a') -and -not $screen.Contains('Executable:') -and -not $screen.Contains('Working directory:')) 'Show the purpose and arguments of unclassified native commands, without the fixed working directory and executable.'
 
     $promptCount = $ApprovalReads
     foreach ($purpose in @('', ' ', ('x' * 1001), "line one`nline two", ([string][char]27 + '[31m'))) {
