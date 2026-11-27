@@ -90,6 +90,12 @@ try {
         $secret = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = $selection }
         Assert-True ($secret.status -eq 'ok' -and $secret.output -ceq '[redacted]') ('Redact a value selected below a credential field: ' + $selection + ' -> ' + $secret.output)
     }
+    # A selected string can hold JSON with credential objects or arrays inside.
+    Set-Content -LiteralPath (Join-Path $Session.Root 'embedded.json') -Encoding UTF8 -Value '{"object":"{\"token\":{\"first\":\"leak-one\",\"second\":\"leak-two\"}}","array":"[{\"password\":[\"leak-three\",\"leak-four\"]},\"kept\"]"}'
+    foreach ($selection in @('object', 'array')) {
+        $embedded = Invoke-TestTool read_file @{ path = 'embedded.json'; json_path = $selection }
+        Assert-True ($embedded.status -eq 'ok' -and -not $embedded.output.Contains('leak-') -and $null -ne (ConvertFrom-Json -InputObject $embedded.output)) ('Redact JSON inside a selected string as JSON: ' + $selection + ' -> ' + $embedded.output)
+    }
     # Redaction can lengthen a value near the page limit; the limit applies to what the model receives.
     Set-Content -LiteralPath (Join-Path $Session.Root 'near.json') -Encoding UTF8 -Value ('{"near":{"pad":"' + ('n' * 32740) + '","password":"x"}}')
     $near = Invoke-TestTool read_file @{ path = 'near.json'; json_path = 'near' }

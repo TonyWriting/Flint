@@ -121,7 +121,8 @@ function Read-FlintJsonValue {
     # A value always fits one page, so redaction sees it whole: pages would cut JSON apart. Redaction can
     # lengthen a value, so a value within the page is redacted here and checked again; a longer one is not.
     if ($text.Length -le 32768) {
-        if ($selected -is [string]) { $text = Protect-FlintText $null $text }
+        # A string can hold JSON, which Protect-FlintValue decodes; text redaction alone could cut it apart.
+        if ($selected -is [string]) { $text = [string](Protect-FlintValue $null $text -Untrusted) }
         elseif ($selected -is [array] -or $selected -is [pscustomobject]) { $text = ConvertTo-Json -InputObject (Protect-FlintValue $null $selected -Untrusted) -Depth 100 -Compress }
     }
     if ($text.Length -gt 32768) {
