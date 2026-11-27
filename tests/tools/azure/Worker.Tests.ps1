@@ -53,7 +53,7 @@ Set-Content -LiteralPath ($RequestPath + '.mode') -Value ([string]$ExecutionCont
             }
         } else {
             $workerPath = Join-Path $app 'tools\Worker.ps1'
-            $request = @{ root = $WorkRoot; name = 'read_file'; arguments = @{ path = 'note.txt'; start_line = 1; start_column = 1; max_lines = 200 }; protected_paths = @(); timeout_sec = 10; result_path = $resultPath }
+            $request = @{ root = $WorkRoot; name = 'read_file'; arguments = @{ path = 'note.txt'; start_line = 1; start_column = 1; max_lines = 200; json_path = $null }; protected_paths = @(); timeout_sec = 10; result_path = $resultPath }
         }
         Set-Content -LiteralPath $requestPath -Value (ConvertTo-Json $request -Depth 16 -Compress) -Encoding UTF8
         $arguments = @('-NoProfile', '-NonInteractive', '-File', ('"' + $workerPath + '"'), '-RequestPath', ('"' + $requestPath + '"'))

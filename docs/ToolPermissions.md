@@ -34,7 +34,7 @@ kubectl 的输出和 Azure 响应一样保存为结果文件（见[响应文件�
 
 匹配**只读规则**的 kubectl 命令自动执行，其他命令都需要审批。规则有两个来源，在会话启动时加载一次：
 
-- `tools/permissions/kubectl.json`：随 Flint 提供的标准资源规则，包括 Pod、Event、Deployment 等的 `get`／`describe`，单个 Pod 最近日志的 `logs`，以及 `config get-contexts`、`api-resources`、`explain`。
+- `tools/permissions/kubectl.json`：随 Flint 提供的标准资源规则，包括 Pod、Event、Deployment 等的 `get`／`describe`（一次最多指定 10 个对象名），单个 Pod 最近日志的 `logs`，以及 `config get-contexts`、`api-resources`、`explain`。
 - 已安装[插件](Plugins.md)中的规则：平台自定义资源（CRD）的查询。
 
 `tools/permissions/kubectl.json` 损坏或含有非只读规则时，Flint 无法启动；插件的规则无效时，只跳过这个插件，启动界面和 `/status` 会说明原因。
@@ -105,7 +105,7 @@ GET 请求自动执行。POST 中只有 Resource Graph 资源查询自动执行�
 
 ### 响应文件与异步修改
 
-Azure 响应的完整正文先脱敏，再保存到工作目录的 `.flint/results/<session-id>/`，kubectl 的输出也保存在这里。kubectl 的 JSON 输出没有内容需要脱敏时按原文保存，预览、搜索结果和行号都与 kubectl 的输出一致；有内容被脱敏时，保存为重新生成的 JSON。不超过 16,384 个字符的结果直接完整交给模型；更长的结果，模型先收到前 16,384 个字符的预览，需要细节时用 `read_file` 和 `search_text` 读取这些文件，不会重新发送请求。当前会话的结果目录自动允许读取；文件在 Flint 退出后保留，可以自行清理。
+Azure 响应的完整正文先脱敏，再保存到工作目录的 `.flint/results/<session-id>/`，kubectl 的输出也保存在这里。kubectl 的 JSON 输出没有内容需要脱敏时按原文保存，预览、搜索结果和行号都与 kubectl 的输出一致；有内容被脱敏时，保存为重新生成的 JSON。不超过 16,384 个字符的结果直接完整交给模型；更长的结果，模型先收到前 16,384 个字符的预览，需要细节时用 `read_file` 和 `search_text` 读取这些文件，不会重新发送请求。`read_file` 带上 `json_path`（例如 `status` 或 `items[0].status.conditions`）时，只返回 JSON 中的这一段，不用先搜索行号：字符串返回文本本身，其他值压缩成一行 JSON。路径经过的字段名像凭据（例如 `password`、`token`）时，返回 `[redacted]`。选中的值总是在一页之内整体脱敏：超过 32,768 个字符时不返回内容，而是列出下一层各属性的大小或数组的项数，方便选更窄的路径。当前会话的结果目录自动允许读取；文件在 Flint 退出后保留，可以自行清理。
 
 Azure 可能先接受修改，再在后台执行。这时第一次响应只说明请求已被接受，工具返回“处理中”；模型随后用 GET 查询操作状态，Flint 遵守服务给出的查询间隔，服务报告成功才算完成，报告失败或取消时作为错误返回。状态查询不会重复执行修改；超过工具时限仍未完成时，可以稍后用 `/c` 继续查询。
 

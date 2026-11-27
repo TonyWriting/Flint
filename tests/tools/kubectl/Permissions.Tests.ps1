@@ -31,19 +31,21 @@ try {
     Assert-True ((Invoke-CommandFixture @('get', 'pods', 'b', '--namespace=ns', '--context=cluster')).status -eq 'ok') 'Match reordered options and equals syntax after the command path.'
     $logs = @('logs', 'a', '--context', 'cluster', '--namespace', 'ns', '--tail', '200', '--previous', '--container', 'app')
     Assert-True ((Invoke-CommandFixture $logs).status -eq 'ok') 'Read a bounded log tail of one pod without approval.'
+    Assert-True ((Invoke-CommandFixture @('get', 'pods', 'a', 'b', '--context', 'cluster', '--namespace', 'ns')).status -eq 'ok') 'Read several named objects of one kind without approval.'
     Assert-True ($Prompts -eq 0) 'Never ask for fixed reads.'
+    $tooMany = @(@('get', 'pods') + @(foreach ($index in 1..11) { 'pod' + $index }) + @('--context', 'cluster', '--namespace', 'ns'))
     $script:Answers = @('n', 'n', 'n', 'n', 'n', 'n', 'n', 'n')
     foreach ($tokens in @(
         @{ a = ($logs + @('--follow')) },
         @{ a = @('logs', 'a', '--context', 'cluster', '--namespace', 'ns') },
         @{ a = @('logs', 'a', '--context', 'cluster', '--namespace', 'ns', '--tail', '5000') },
-        @{ a = @('get', 'pods', 'a', 'b', '--context', 'cluster', '--namespace', 'ns') },
+        @{ a = $tooMany },
         @{ a = @('get', 'secrets', '--context', 'cluster', '--namespace', 'ns') },
         @{ a = ($showA + @('--debug')) },
         @{ a = ($showA + @('--context', 'other')) },
         @{ a = @('get', '--context', 'delete', 'pods', '--namespace', 'ns') }
     )) { Assert-True ((Invoke-CommandFixture $tokens.a).status -eq 'denied') 'Do not infer safety from a prefix, verb, extra flag, or duplicate option.' }
-    Assert-True ($Executions.Count -eq 4) 'Denied commands never reach the worker.'
+    Assert-True ($Executions.Count -eq 5) 'Denied commands never reach the worker.'
     Assert-True (@($Session.Approvals.kubectl).Count -eq 0) 'Declining commands never records an approval.'
 
     $script:Answers = @('n')

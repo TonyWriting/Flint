@@ -58,8 +58,8 @@ try {
     }
 
     Set-Content -LiteralPath (Join-Path $WorkRoot 'note.txt') -Value 'stop fixture' -Encoding UTF8
-    $read1 = @{ type = 'function_call'; call_id = 'call_1'; name = 'read_file'; arguments = '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200}' }
-    $read2 = @{ type = 'function_call'; call_id = 'call_2'; name = 'read_file'; arguments = '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200}' }
+    $read1 = @{ type = 'function_call'; call_id = 'call_1'; name = 'read_file'; arguments = '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200,"json_path":null}' }
+    $read2 = @{ type = 'function_call'; call_id = 'call_2'; name = 'read_file'; arguments = '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200,"json_path":null}' }
     $script:Responses = @(New-TestResponse @($read1, $read2))
     $script:StopWhen = { param($State) @($State.History | Where-Object { $_.type -eq 'function_call_output' }).Count -ge 1 }
     $answer = Invoke-AgentTurn $Session 'Read the note twice.' 10
@@ -86,7 +86,7 @@ try {
 
     # A change in progress finishes before the stop takes effect.
     $write = @{ type = 'function_call'; call_id = 'call_3'; name = 'write_file'; arguments = '{"path":"stop.txt","content":"kept"}' }
-    $read4 = @{ type = 'function_call'; call_id = 'call_4'; name = 'read_file'; arguments = '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200}' }
+    $read4 = @{ type = 'function_call'; call_id = 'call_4'; name = 'read_file'; arguments = '{"path":"note.txt","start_line":1,"start_column":1,"max_lines":200,"json_path":null}' }
     $script:Responses = @(New-TestResponse @($write, $read4))
     $script:StopWhen = { param($State) [bool]$State.StopDeferred }
     $answer = Invoke-AgentTurn $Session 'Write a file, then read the note.' 10

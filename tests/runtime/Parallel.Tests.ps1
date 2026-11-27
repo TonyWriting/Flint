@@ -10,7 +10,7 @@ function Invoke-AgentResponse {
 }
 function New-ParallelRead {
     param([string]$Path)
-    return New-TestFunctionCall read_file @{ path = $Path; start_line = 1; start_column = 1; max_lines = 200 }
+    return New-TestFunctionCall read_file @{ path = $Path; start_line = 1; start_column = 1; max_lines = 200; json_path = $null }
 }
 function Set-ParallelReplies {
     param([object[]]$Calls)

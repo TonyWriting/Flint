@@ -38,6 +38,7 @@ try {
     Assert-True ((ConvertTo-Json -InputObject $Session.Tools -Depth 16 -Compress) -ceq $baseTools -and $Session.Tools.Count -eq 8) 'Plugins never change tool definitions.'
     Assert-True ($Session.Instructions.StartsWith($baseInstructions) -and $Session.Instructions.Contains('Installed plugins:') -and
         $Session.Instructions.Contains('- example 1.0.0: Fictional widgets') -and $Session.Instructions.Contains('  Guide: ' + $Session.Plugins[0].guide)) 'Describe installed plugins after the fixed instructions.'
+    Assert-True ($Session.Instructions.Contains('read its entire guide with read_file, continuing from next_line until it is not truncated')) 'Ask for the whole guide, whatever its length.'
     $events = @(Get-TestEvents)
     $start = @($events | Where-Object { $_.event -eq 'session_started' })[0]
     Assert-True ($start.data.plugins[0].name -ceq 'example' -and $start.data.plugins[0].rules -eq 2 -and @($start.data.plugin_errors).Count -eq 2) 'Record the plugin set in the trajectory.'

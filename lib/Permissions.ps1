@@ -185,8 +185,7 @@ function Read-FlintCommandApproval {
     Write-Host (Protect-FlintText $Session ('Purpose (model-provided): ' + $Purpose)) -ForegroundColor Yellow
     Write-Host ('Command: ' + $Invocation.executor) -ForegroundColor Yellow
     Write-Host (Protect-FlintText $Session ('Arguments: ' + (ConvertTo-Json -InputObject @($Invocation.arguments) -Depth 8 -Compress))) -ForegroundColor Yellow
-    Write-Host (Protect-FlintText $Session ('Working directory: ' + $Invocation.working_directory))
-    Write-Host (Protect-FlintText $Session ('Executable: ' + $Invocation.program.path))
+    # The working directory and executable path still belong to the approved invocation and the trajectory.
     foreach ($name in $Invocation.environment.Keys) {
         if ($Invocation.environment[$name]) { Write-Host (Protect-FlintText $Session ($name + ': ' + $Invocation.environment[$name])) }
     }

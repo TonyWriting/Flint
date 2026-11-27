@@ -45,7 +45,10 @@ function Get-FlintDirectoryPage {
 function Invoke-FlintFileTool {
     param([string]$Root, [string]$Name, $ToolArguments, [string[]]$ProtectedPaths, [string]$WriteDirectory, [string]$SessionId)
     $path = Resolve-FlintFileTarget $Root $Name $ToolArguments $ProtectedPaths -SessionId $SessionId
-    if ($Name -eq 'read_file') { return Read-FlintTextFile $path $ToolArguments }
+    if ($Name -eq 'read_file') {
+        if ($ToolArguments.json_path) { return Read-FlintJsonValue $path $ToolArguments }
+        return Read-FlintTextFile $path $ToolArguments
+    }
     if ($Name -in @('write_file', 'edit_file', 'create_directory') -and
         -not (Test-FlintPathWithinDirectory $path $Root) -and -not (Test-FlintPathWithinDirectory $path $WriteDirectory)) {
         throw 'Writing outside the working directory requires directory authorization.'

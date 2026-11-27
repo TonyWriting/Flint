@@ -99,7 +99,7 @@ try {
     foreach ($index in 1..4) { Set-Content -LiteralPath (Join-Path $WorkRoot ('loop' + $index + '.txt')) -Value (('loop-page-' + $index + ' ') + ('z' * 20000)) -Encoding UTF8 -NoNewline }
     $script:LoopPayloads = @()
     $script:LoopReplies = @(foreach ($index in 1..4) {
-        @{ status = 'completed'; output = @(@{ type = 'function_call'; call_id = ('loop_' + $index); name = 'read_file'; arguments = ('{"path":"loop' + $index + '.txt","start_line":1,"start_column":1,"max_lines":200}') }) }
+        @{ status = 'completed'; output = @(@{ type = 'function_call'; call_id = ('loop_' + $index); name = 'read_file'; arguments = ('{"path":"loop' + $index + '.txt","start_line":1,"start_column":1,"max_lines":200,"json_path":null}') }) }
     })
     $script:LoopReplies += @{ status = 'completed'; output = @(@{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = 'Read every page.' }) }) }
     function Invoke-AgentResponse {
