@@ -69,7 +69,7 @@ function Select-FlintJsonValue {
     if ($path -cnotmatch '^(?:\.[^.\[\]]+|\[\d{1,9}\])+$') {
         throw 'json_path must be property names separated by dots, each optionally followed by [index], such as status or items[0].status.conditions.'
     }
-    $current = $Value; $at = '$'; $sensitive = $false; $secretName = Get-FlintSecretNamePattern
+    $current = $Value; $at = '$'; $secretName = Get-FlintSecretNamePattern
     foreach ($token in @($path -split '(?=[.\[])' | Where-Object { $_ })) {
         if ($token.StartsWith('[')) {
             $index = [int]$token.Substring(1, $token.Length - 2)
@@ -85,13 +85,13 @@ function Select-FlintJsonValue {
                 $names = @($current.PSObject.Properties | Select-Object -First 50 | ForEach-Object { $_.Name }) -join ', '
                 throw ($at + ' has no property ' + $name + '. Properties: ' + $names)
             }
+            # Selection drops the field names above the value, so a credential field on the path redacts it here,
+            # before anything below it, such as property names in an error, can reach the output.
+            if ($name -match $secretName -or (Protect-FlintText $null $name) -match $secretName) { return '[redacted]' }
             $current = $property[0].Value
-            # Selection drops the field names above the value, so a credential field on the path redacts it here.
-            if ($name -match $secretName -or (Protect-FlintText $null $name) -match $secretName) { $sensitive = $true }
         }
         $at += $token
     }
-    if ($sensitive) { return '[redacted]' }
     if ($current -is [array]) { return ,$current }
     return $current
 }
@@ -118,13 +118,22 @@ function Read-FlintJsonValue {
         elseif ($selected -is [bool]) { $type = 'boolean' }
         else { $type = 'number' }
     }
-    # A value always fits one page, so redaction sees it whole: pages would cut JSON apart. A longer value
-    # returns the sizes below it, which lead to a narrower path.
+    # A value always fits one page, so redaction sees it whole: pages would cut JSON apart. Redaction can
+    # lengthen a value, so a value within the page is redacted here and checked again; a longer one is not.
+    if ($text.Length -le 32768) {
+        if ($selected -is [string]) { $text = Protect-FlintText $null $text }
+        elseif ($selected -is [array] -or $selected -is [pscustomobject]) { $text = ConvertTo-Json -InputObject (Protect-FlintValue $null $selected -Untrusted) -Depth 100 -Compress }
+    }
     if ($text.Length -gt 32768) {
+        # The sizes below the value lead to a narrower path; credential fields show only their names.
         $detail = ''
         if ($selected -is [array]) { $detail = ' It has ' + $selected.Count + ' items; select one with [index].' }
         elseif ($selected -is [pscustomobject]) {
-            $sizes = @($selected.PSObject.Properties | Select-Object -First 50 | ForEach-Object { $_.Name + ' (' + (ConvertTo-Json -InputObject $_.Value -Depth 100 -Compress).Length + ')' })
+            $secretName = Get-FlintSecretNamePattern
+            $sizes = @($selected.PSObject.Properties | Select-Object -First 50 | ForEach-Object {
+                if ($_.Name -match $secretName -or (Protect-FlintText $null $_.Name) -match $secretName) { $_.Name }
+                else { $_.Name + ' (' + (ConvertTo-Json -InputObject $_.Value -Depth 100 -Compress).Length + ')' }
+            })
             $detail = ' Properties with their sizes: ' + ($sizes -join ', ') + '.'
         }
         throw ('The value at ' + $ToolArguments.json_path + ' has ' + $text.Length + ' characters, more than one 32768-character page. Select a narrower json_path, or read the file without json_path.' + $detail)

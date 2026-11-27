@@ -85,10 +85,15 @@ try {
     Assert-True ($list.status -eq 'error' -and $list.output -like '*It has 2 items; select one with `[index`].*') ('Give the item count of a long array. ' + $list.output)
     # A local JSON file is not redacted before it is read, so selection must not lose the field that holds a credential.
     Set-Content -LiteralPath (Join-Path $Session.Root 'settings.json') -Encoding UTF8 -Value '{"settings":{"password":"hunter2","token":{"inner":"tok-private"}},"message":"password=hidden","notes":["password=hidden","password=\"[redacted]\""]}'
-    foreach ($selection in @('settings.password', 'settings.token.inner')) {
+    # A path below a credential field stops there, so even an error cannot list the names inside it.
+    foreach ($selection in @('settings.password', 'settings.token.inner', 'settings.token.missing')) {
         $secret = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = $selection }
         Assert-True ($secret.status -eq 'ok' -and $secret.output -ceq '[redacted]') ('Redact a value selected below a credential field: ' + $selection + ' -> ' + $secret.output)
     }
+    # Redaction can lengthen a value near the page limit; the limit applies to what the model receives.
+    Set-Content -LiteralPath (Join-Path $Session.Root 'near.json') -Encoding UTF8 -Value ('{"near":{"pad":"' + ('n' * 32740) + '","password":"x"}}')
+    $near = Invoke-TestTool read_file @{ path = 'near.json'; json_path = 'near' }
+    Assert-True ($near.status -eq 'error' -and $near.output -like '*has 32774 characters*' -and -not $near.output.Contains('[truncated')) ('Check the page limit after redaction. ' + $near.output)
     $message = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = 'message' }
     Assert-True ($message.value_type -eq 'string' -and -not $message.output.Contains('hidden')) ('Redact a selected string like any text. ' + $message.output)
     $notes = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = 'notes' }
@@ -98,7 +103,7 @@ try {
     # A credential subtree past the first page is never returned in pieces; the sizes lead to a narrower path.
     Set-Content -LiteralPath (Join-Path $Session.Root 'large.json') -Encoding UTF8 -Value ('{"big":{"pad":"' + ('p' * 32740) + '","secret":{"inner":"leak-value-1","list":["leak-value-2"]}}}')
     $big = Invoke-TestTool read_file @{ path = 'large.json'; json_path = 'big' }
-    Assert-True ($big.status -eq 'error' -and -not $big.output.Contains('leak-value') -and $big.output -like '*Properties with their sizes: pad (32742), secret (*') ('List sizes instead of paging a long object. ' + $big.output)
+    Assert-True ($big.status -eq 'error' -and -not $big.output.Contains('leak-value') -and $big.output -like '*Properties with their sizes: pad (32742), secret.') ('List sizes instead of paging a long object, without the size of a credential field. ' + $big.output)
     $narrow = Invoke-TestTool read_file @{ path = 'large.json'; json_path = 'big.secret' }
     Assert-True ($narrow.status -eq 'ok' -and $narrow.output -ceq '[redacted]') 'Redact the narrower credential selection.'
     Assert-True ((Invoke-TestTool read_file @{ path = 'large.json'; json_path = 'big.secret'; start_column = 2 }).output -like '*start_column 1*') 'Do not page a selected value.'
