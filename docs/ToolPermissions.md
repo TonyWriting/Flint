@@ -34,7 +34,7 @@ kubectl 的输出和 Azure 响应一样保存为结果文件（见[响应文件�
 
 匹配**只读规则**的 kubectl 命令自动执行，其他命令都需要审批。规则有两个来源，在会话启动时加载一次：
 
-- `tools/permissions/kubectl.json`：随 Flint 提供的标准资源规则，包括 Pod、Event、Deployment 等的 `get`／`describe`，单个 Pod 最近日志的 `logs`，以及 `config get-contexts`、`api-resources`、`explain`。
+- `tools/permissions/kubectl.json`：随 Flint 提供的标准资源规则，包括 Pod、Event、Deployment 等的 `get`／`describe`（一次最多指定 10 个对象名），单个 Pod 最近日志的 `logs`，以及 `config get-contexts`、`api-resources`、`explain`。
 - 已安装[插件](Plugins.md)中的规则：平台自定义资源（CRD）的查询。
 
 `tools/permissions/kubectl.json` 损坏或含有非只读规则时，Flint 无法启动；插件的规则无效时，只跳过这个插件，启动界面和 `/status` 会说明原因。
