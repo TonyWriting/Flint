@@ -251,12 +251,13 @@ function Format-FlintIniValue {
 }
 
 function Save-FlintStagedConfig {
-    param([string]$Path, [string]$Source, $Model, [string]$ApiKey)
+    param([string]$Path, [string]$Source, $Model, [string]$Effort, [string]$ApiKey)
     $lines = @(
         ('; Written by agent.ps1 -Setup from ' + $Source + '. Run -Setup again to update. Keep this file private.')
         '[model]'
         ('endpoint = ' + (Format-FlintIniValue $Model.ApiEndpoint))
         ('deployment = ' + (Format-FlintIniValue $Model.Model))
+        ('reasoning_effort = ' + $Effort)
     )
     if ($Model.ApiKeyHelp) { $lines += ('api_key_help = ' + (Format-FlintIniValue $Model.ApiKeyHelp)) }
     # The user pastes the key after the equals sign; Flint never reads it from the terminal.
@@ -379,16 +380,19 @@ function Install-FlintSetup {
         $setup = Test-FlintSetup $folder
         Write-FlintSetupStep ('Validated the setup with ' + @($setup.plugins).Count + ' plugin(s)') $started
         Show-FlintSetupSummary $setup
-        # Running setup again keeps the key the user already pasted into flint.ini. A file that cannot be read
-        # stops setup here, before anything changes, so its key is never replaced by an empty one.
-        $key = ''
+        # Running setup again keeps the key and the reasoning effort the user already set in flint.ini. A file that
+        # cannot be read stops setup here, before anything changes, so its key is never replaced by an empty one.
+        $key = ''; $effort = $setup.model.Effort
         if (Test-Path -LiteralPath $ConfigFile -PathType Leaf) {
-            try { $key = ([string](Read-FlintIniFile $ConfigFile (Get-FlintConfigSchema))['model.api_key']).Trim() }
-            catch { throw ("Could not read the current '" + $ConfigFile + "' to keep its API key. " + $_.Exception.Message + ' Fix the file, or delete it to start over, then run -Setup again.') }
+            try { $current = Read-FlintIniFile $ConfigFile (Get-FlintConfigSchema) }
+            catch { throw ("Could not read the current '" + $ConfigFile + "' to keep its API key and reasoning effort. " + $_.Exception.Message + ' Fix the file, or delete it to start over, then run -Setup again.') }
+            $key = ([string]$current['model.api_key']).Trim()
+            $kept = @(Get-FlintEffortLevels | Where-Object { $_ -eq $current['model.reasoning_effort'] })
+            if ($kept.Count -gt 0) { $effort = $kept[0] }
         }
         # Write the new flint.ini before plugins change, so a folder that cannot take it fails while nothing has
         # changed. If a plugin then fails, the previous flint.ini stays; afterwards only a rename remains.
-        $staged = Save-FlintStagedConfig $ConfigFile $parsed.display $setup.model $key
+        $staged = Save-FlintStagedConfig $ConfigFile $parsed.display $setup.model $effort $key
         $removed = @(Sync-FlintPlugins $setup.plugins $PluginDirectory $parsed $commit)
         $started = [datetime]::UtcNow
         try { Move-Item -LiteralPath $staged -Destination $ConfigFile -Force -ErrorAction Stop; $staged = $null }

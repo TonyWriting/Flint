@@ -21,6 +21,7 @@ Set-Content -LiteralPath (Join-Path $appRoot 'flint.ini') -Encoding ASCII -Value
     '[model]'
     'endpoint = https://test.services.ai.azure.com/openai/v1/responses'
     'deployment = test-deployment'
+    'reasoning_effort = medium'
     'api_key = test-api-key'
 )
 $driver = [powershell]::Create()

@@ -51,7 +51,6 @@ Flint 把会话记录为**轨迹**，默认保存在工作目录的 `.flint/traj
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `-ReasoningEffort` | `medium` | 推理强度：`none`、`low`、`medium`、`high`、`xhigh` 或 `max`。 |
 | `-MaxTurns` | `20` | 每次输入最多的模型轮数，1～1000。 |
 | `-MaxToolCalls` | `40` | 每次输入最多的工具调用次数，1～200。 |
 | `-MaxParallelTools` | `4` | 每组并行的只读工具数，1～8。 |

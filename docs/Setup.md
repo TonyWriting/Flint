@@ -8,12 +8,14 @@ Flint 从 `agent.ps1` 旁边的 `flint.ini` 读取模型配置。一个人使用
 [model]
 endpoint = https://<resource>.services.ai.azure.com/openai/v1/responses
 deployment = <deployment>
+reasoning_effort = medium
 api_key = <key>
 api_key_help = Copy the API key from <where your team keeps it>.
 ```
 
 - `endpoint`：Azure AI Foundry Responses 接口的完整 HTTPS 地址，以 `/openai/v1/responses` 结尾，不含凭据、查询参数、fragment 或结尾斜杠。
 - `deployment`：模型的部署名。
+- `reasoning_effort`：推理强度，可选 `none`、`low`、`medium`、`high`、`xhigh` 或 `max`，不区分大小写。强度越高，模型回答前思考得越久。可用的值取决于模型部署：部署不支持时，模型服务返回 HTTP 400 并列出它支持的值。
 - `api_key`：API key。
 - `api_key_help`：可选，最多 400 个字符，写明去哪里取 key。`-Setup` 结束时、`api_key` 还没填就启动时、模型拒绝 key（HTTP 401，通常是 key 已轮换）时，Flint 都会显示它。
 
@@ -38,6 +40,7 @@ Flint/                      配置文件夹，名字任意
 [model]
 endpoint = https://<resource>.services.ai.azure.com/openai/v1/responses
 deployment = <deployment>
+reasoning_effort = medium
 api_key_help = Copy the API key from <where your team keeps it>.
 ```
 
@@ -56,7 +59,7 @@ powershell.exe -NoProfile -File .\agent.ps1 -Setup 'C:\Downloads\flint.zip'
 powershell.exe -NoProfile -File .\agent.ps1 -Setup 'C:\src\Repo\team\flint'
 ```
 
-Flint 先完整校验 `flint.ini` 和每个插件，发现问题就列出全部原因并停止，本机不做任何改动。校验通过后，Flint 列出模型和插件，把插件同步到 Flint 目录下的 `plugins/`，配置文件夹中已经没有的插件会从本机删除；然后生成 `flint.ini`，第一行注明来源。本机 `flint.ini` 中已经填了 `api_key` 时保留它，否则 `api_key` 留空。最后 Flint 显示启动命令并退出；`api_key` 为空时，还会先显示 `api_key_help` 和 key 要粘贴的位置。`/status` 显示每个插件的来源和安装时间。
+Flint 先完整校验 `flint.ini` 和每个插件，发现问题就列出全部原因并停止，本机不做任何改动。校验通过后，Flint 列出模型和插件，把插件同步到 Flint 目录下的 `plugins/`，配置文件夹中已经没有的插件会从本机删除；然后生成 `flint.ini`，第一行注明来源。本机 `flint.ini` 中已经填了 `api_key` 时保留它，否则 `api_key` 留空；`reasoning_effort` 同样保留本机的值，本机没有有效的值时使用配置文件夹中的值。最后 Flint 显示启动命令并退出；`api_key` 为空时，还会先显示 `api_key_help` 和 key 要粘贴的位置。`/status` 显示每个插件的来源和安装时间。
 
 团队更新了模型或插件后，重新运行同一条命令即可同步，已经填好的 key 会保留；现有的 `flint.ini` 无法读取时，`-Setup` 在改动任何内容之前停止，说明哪一行有问题，修好或删掉这个文件后再运行即可。key 轮换时，直接编辑 `flint.ini` 中的 `api_key`。插件在 Flint 启动时加载，同步之后启动的 Flint，包括用 `-Resume` 恢复的会话，都使用新装的插件。
 

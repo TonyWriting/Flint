@@ -36,8 +36,10 @@ function Get-FlintDefaultConfigPath { return Join-Path (Split-Path $PSScriptRoot
 
 function Get-FlintConfigSchema {
     # Every accepted section and setting; anything else in the file is reported as an error.
-    return @{ model = @('endpoint', 'deployment', 'api_key', 'api_key_help') }
+    return @{ model = @('endpoint', 'deployment', 'reasoning_effort', 'api_key', 'api_key_help') }
 }
+
+function Get-FlintEffortLevels { return @('none', 'low', 'medium', 'high', 'xhigh', 'max') }
 
 function Read-FlintIniFile {
     param([string]$Path, [hashtable]$Schema)
@@ -77,17 +79,21 @@ function Read-FlintIniFile {
 function ConvertTo-FlintModelConfig {
     param([hashtable]$Values, [switch]$WithoutKey)
     # Shared by flint.ini and team setup templates; a template leaves the key to each user.
-    $required = @('endpoint', 'deployment')
+    $required = @('endpoint', 'deployment', 'reasoning_effort')
     if (-not $WithoutKey) { $required += 'api_key' }
     $help = [string]$Values['model.api_key_help']
+    $levels = @(Get-FlintEffortLevels)
     foreach ($name in $required) {
         if ([string]::IsNullOrWhiteSpace($Values['model.' + $name])) {
             $message = 'Set ' + $name + ' under [model].'
+            if ($name -ceq 'reasoning_effort') { $message += ' Use one of: ' + ($levels -join ', ') + '.' }
             # A missing key is the usual first-run gap after -Setup, so point at where to get one.
             if ($name -ceq 'api_key' -and $help) { $message += ' ' + $help }
             throw $message
         }
     }
+    $effort = @($levels | Where-Object { $_ -eq $Values['model.reasoning_effort'] })
+    if ($effort.Count -eq 0) { throw ('reasoning_effort under [model] must be one of: ' + ($levels -join ', ') + '.') }
     $apiEndpoint = $Values['model.endpoint']
     $apiUri = $apiEndpoint -as [uri]
     if (-not $apiUri -or -not $apiUri.IsAbsoluteUri -or $apiUri.Scheme -ne 'https' -or
@@ -95,7 +101,7 @@ function ConvertTo-FlintModelConfig {
         throw 'endpoint under [model] must be a complete HTTPS URL ending in /openai/v1/responses, without credentials, query or fragment.'
     }
     if ($help.Length -gt 400) { throw 'api_key_help under [model] is limited to 400 characters.' }
-    return @{ ApiEndpoint = $apiEndpoint; Model = $Values['model.deployment']; ApiKey = [string]$Values['model.api_key']; ApiKeyHelp = $help }
+    return @{ ApiEndpoint = $apiEndpoint; Model = $Values['model.deployment']; Effort = $effort[0]; ApiKey = [string]$Values['model.api_key']; ApiKeyHelp = $help }
 }
 
 function Read-FlintConfig {
@@ -103,7 +109,7 @@ function Read-FlintConfig {
     if ([string]::IsNullOrWhiteSpace($ConfigFile)) { $ConfigFile = Get-FlintDefaultConfigPath }
     if (-not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) {
         $templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'flint.example.ini'
-        throw ("Configuration file not found: '{0}'. Run agent.ps1 -Setup with the setup folder your team provides, or copy the template '{1}' to this path and set endpoint, deployment and api_key under [model]." -f $ConfigFile, $templatePath)
+        throw ("Configuration file not found: '{0}'. Run agent.ps1 -Setup with the setup folder your team provides, or copy the template '{1}' to this path and set endpoint, deployment, reasoning_effort and api_key under [model]." -f $ConfigFile, $templatePath)
     }
     $configPath = (Resolve-Path -LiteralPath $ConfigFile -ErrorAction Stop).ProviderPath
     try { $config = ConvertTo-FlintModelConfig (Read-FlintIniFile $configPath (Get-FlintConfigSchema)) }
