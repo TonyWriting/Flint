@@ -98,7 +98,10 @@ function Invoke-FlintFileTool {
             if ($null -eq $verified) { $verified = '' }
         } catch { throw ('Write could not be verified. Read the actual file before another edit. ' + $_.Exception.Message) }
         if ($verified -cne $updated) { throw 'Write verification failed. Read the actual file before proposing another edit.' }
-        $output = 'File written and verified: ' + $ToolArguments.path
+        # The result says what happened to the file, so the model needs neither a check before nor a read after.
+        if ($Name -eq 'edit_file') { $output = 'Edited, read back and verified: ' + $ToolArguments.path }
+        elseif ($exists) { $output = 'Replaced an existing file of ' + $content.Length + ' characters, read back and verified: ' + $ToolArguments.path }
+        else { $output = 'Created, read back and verified: ' + $ToolArguments.path }
     }
     return @{ status = 'ok'; exit_code = 0; output = $output; retryable = $false; duration_ms = 0 }
 }

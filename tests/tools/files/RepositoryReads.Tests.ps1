@@ -4,6 +4,9 @@ try {
     # Exercise repository permissions using synthetic files in an isolated runtime copy.
     $runtime = New-TestRuntime (Join-Path $WorkRoot 'runtime')
     $Session.WorkerPath = Join-Path $runtime 'tools\Worker.ps1'
+    # The installation is where tools\Files.ps1 lives. Searches run in the copy's worker; file reads run in the
+    # main process, so it loads the copy's file tools too.
+    . (Join-Path $runtime 'tools\Files.ps1')
     foreach ($directory in @('.git', '.flint', '.ssh')) { New-Item -ItemType Directory -Path (Join-Path $runtime $directory) | Out-Null }
     $Session.ProtectedPaths += Join-Path $runtime 'private-config.txt'
     foreach ($relative in @('.env', '.git\config', '.flint\other-session.json', '.ssh\id_rsa', 'private-config.txt', 'flint.ini')) {

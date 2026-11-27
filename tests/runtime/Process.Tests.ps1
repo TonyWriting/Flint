@@ -75,7 +75,7 @@ try {
     # Use a harness-owned fixture as the worker to verify timeout behavior at the tool boundary.
     Set-Content -LiteralPath $fixturePath -Encoding ASCII -Value 'param($RequestPath); Start-Sleep -Seconds 60'
     $Session.WorkerPath = $fixturePath; $Session.ToolTimeoutSec = 1
-    $result = Invoke-TestTool read_file @{ path = 'note.txt' }
+    $result = Invoke-TestTool search_text @{ path = 'note.txt'; keyword = 'x' }
     Assert-True ($result.status -eq 'timeout') ('Return a structured tool timeout.' + (Format-TestResult $result))
     $result = Invoke-TestTool edit_file @{ path = 'note.txt'; old_str = 'original'; new_str = 'content' }
     Assert-True ($result.status -eq 'timeout' -and $result.output -like '*outcome may be unknown*') 'Require state verification after a write timeout.'
