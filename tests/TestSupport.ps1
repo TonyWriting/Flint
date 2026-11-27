@@ -103,7 +103,7 @@ function New-TestSetup {
     # A fictional team setup folder: a flint.ini template without a key and Plugins\<name> folders.
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
     if ($null -eq $Template) {
-        $Template = @('[model]', 'endpoint = https://contoso.services.ai.azure.com/openai/v1/responses', 'deployment = team-model', 'api_key_help = Ask the team for the key.')
+        $Template = @('[model]', 'endpoint = https://contoso.services.ai.azure.com/openai/v1/responses', 'deployment = team-model', 'reasoning_effort = medium', 'api_key_help = Ask the team for the key.')
     }
     Set-Content -LiteralPath (Join-Path $Path 'flint.ini') -Encoding UTF8 -Value $Template
     foreach ($name in $Plugins) { $null = New-TestPlugin (Join-Path $Path ('Plugins\' + $name)) -Name $name }
@@ -151,7 +151,7 @@ $script:WorkRoot = Join-Path $script:TestRoot 'work'
 New-Item -ItemType Directory -Path $script:WorkRoot -Force | Out-Null
 function Get-TestConfigLines {
     # A complete configuration for offline suites.
-    return @('[model]', 'endpoint = https://test.services.ai.azure.com/openai/v1/responses', 'deployment = test-deployment', 'api_key = test-api-key')
+    return @('[model]', 'endpoint = https://test.services.ai.azure.com/openai/v1/responses', 'deployment = test-deployment', 'reasoning_effort = medium', 'api_key = test-api-key')
 }
 $config = Join-Path $script:TestRoot 'flint.ini'
 Set-Content -LiteralPath $config -Encoding UTF8 -Value (Get-TestConfigLines)

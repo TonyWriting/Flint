@@ -3,7 +3,6 @@
 param(
     [Parameter(Position = 0)][string]$Prompt,
     [string]$Resume,
-    [ValidateSet('none', 'low', 'medium', 'high', 'xhigh', 'max')][string]$ReasoningEffort = 'medium',
     [ValidateRange(1, 1000)][int]$MaxTurns = 20,
     [ValidateRange(1, 300)][int]$RequestTimeoutSec = 180,
     [ValidateRange(1, 300)][int]$ToolTimeoutSec = 30,
@@ -65,7 +64,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     $session = $null
     $exitReason = 'cancelled'
     try {
-        $session = New-AgentSession -Resume $Resume -Effort $ReasoningEffort `
+        $session = New-AgentSession -Resume $Resume `
             -RequestTimeoutSec $RequestTimeoutSec -ToolTimeoutSec $ToolTimeoutSec `
             -MaxToolCalls $MaxToolCalls -MaxParallelTools $MaxParallelTools -MaxOutputTokens $MaxOutputTokens `
             -ContextWindow $ContextWindow -TrajectoryDirectory $TrajectoryDirectory `

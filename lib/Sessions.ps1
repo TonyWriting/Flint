@@ -1,6 +1,6 @@
 function New-AgentSession {
     param(
-        [string]$ConfigFile, [string]$Effort = 'medium',
+        [string]$ConfigFile,
         [int]$RequestTimeoutSec = 180, [int]$ToolTimeoutSec = 30,
         [int]$MaxToolCalls = 40, [int]$MaxOutputTokens = 4096,
         [int]$ContextWindow = 0, [string]$TrajectoryDirectory, [string]$Resume,
@@ -36,7 +36,7 @@ function New-AgentSession {
     }
     $session = @{
         Id = $id; Started = $started; Root = $root.FullName
-        Model = $config.Model; Effort = $Effort
+        Model = $config.Model; Effort = $config.Effort
         ApiKey = $config.ApiKey; ApiKeyHelp = $config.ApiKeyHelp; ApiEndpoint = $config.ApiEndpoint
         History = @(); Tools = @(Get-AgentTools); Instructions = Get-FlintInstructions -Plugins @($plugins.loaded)
         TrajectoryPath = $logPath; EventSequence = $sequence; LogFailed = $false
@@ -80,7 +80,7 @@ function New-AgentSession {
         root = $session.Root; model = $session.Model; language_mode = [string]$ExecutionContext.SessionState.LanguageMode
         powershell_version = [string]$PSVersionTable.PSVersion; request_timeout_sec = $RequestTimeoutSec
         tool_timeout_sec = $ToolTimeoutSec; max_tool_calls = $MaxToolCalls; max_parallel_tools = $MaxParallelTools
-        context_window = $ContextWindow; max_output_tokens = $MaxOutputTokens; reasoning_effort = $Effort
+        context_window = $ContextWindow; max_output_tokens = $MaxOutputTokens; reasoning_effort = $session.Effort
         resumed_from = $Resume; instructions = $session.Instructions; tools = $session.Tools
         plugins = @(Get-FlintPluginRecords $session.Plugins); plugin_errors = @($session.PluginErrors)
     }

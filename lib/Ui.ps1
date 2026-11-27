@@ -178,7 +178,6 @@ function Show-FlintExit {
     $directory = Split-Path $Session.TrajectoryPath -Parent
     if ($directory -ine (Join-Path $Session.Root '.flint\trajectories')) { $command += " -TrajectoryDirectory '" + $directory.Replace("'", "''") + "'" }
     foreach ($option in @(
-        @{ Name = 'ReasoningEffort'; Value = $Session.Effort; Default = 'medium' },
         @{ Name = 'MaxTurns'; Value = $Session.TurnLimit; Default = 20 },
         @{ Name = 'ContextWindow'; Value = $Session.ContextWindow; Default = 0 },
         @{ Name = 'MaxOutputTokens'; Value = $Session.MaxOutputTokens; Default = 4096 },
