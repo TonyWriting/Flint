@@ -8,7 +8,7 @@ Flint 从 `agent.ps1` 旁边的 `flint.ini` 读取模型配置。一个人使用
 [model]
 endpoint = https://<resource>.services.ai.azure.com/openai/v1/responses
 deployment = <deployment>
-reasoning_effort = medium
+reasoning_effort = high
 api_key = <key>
 api_key_help = Copy the API key from <where your team keeps it>.
 ```
@@ -40,7 +40,7 @@ Flint/                      配置文件夹，名字任意
 [model]
 endpoint = https://<resource>.services.ai.azure.com/openai/v1/responses
 deployment = <deployment>
-reasoning_effort = medium
+reasoning_effort = high
 api_key_help = Copy the API key from <where your team keeps it>.
 ```
 

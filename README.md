@@ -31,7 +31,7 @@ powershell.exe -NoProfile -File .\agent.ps1 -Setup 'https://dev.azure.com/contos
 [model]
 endpoint = https://<resource>.services.ai.azure.com/openai/v1/responses
 deployment = <your-deployment>
-reasoning_effort = medium
+reasoning_effort = high
 api_key = <your-key>
 ```
 
