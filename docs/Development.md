@@ -13,7 +13,7 @@ Flint 由入口脚本、运行机制和模型工具三部分组成。`lib/` 是 
 | `tools/Files.ps1`、`Reading.ps1`、`Searching.ps1` | 文件操作、分页读取和文本搜索。 |
 | `tools/Commands.ps1`、`tools/permissions/` | kubectl 执行、受保护资源的修改约束，以及标准 Kubernetes 只读规则。 |
 | `tools/azure/` | Azure 认证、授权和 ARM 请求。 |
-| `tools/Worker.ps1` | 工具子进程的入口，校验请求后分派到具体工具。`read_file` 和 `list_files` 每次只处理一页，在主进程中直接执行，不启动子进程。 |
+| `tools/Worker.ps1` | 工具子进程的入口，校验请求后分派到具体工具。`read_file` 读取不超过 256 KiB 的文件时在主进程中直接执行，不启动子进程；更大的文件、目录列表和搜索的工作量没有上限，仍在子进程中执行，受工具时限约束，也能立即中止。 |
 | `tests/` | 离线测试，目录与代码对应。 |
 
 判断代码归属时看它负责什么：Windows 进程参数转义属于 `lib/Runtime.ps1`，Azure token 获取属于 `tools/azure/Auth.ps1`，kubectl 参数约束属于 `tools/Commands.ps1`。工具专用的代码即使被多处调用，也放在对应的工具目录。

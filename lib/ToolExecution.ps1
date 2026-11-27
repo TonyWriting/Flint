@@ -18,15 +18,21 @@ function Complete-FlintToolResult {
 }
 
 function Test-FlintInProcessTool {
-    param([string]$Name)
-    # A file page or directory page is bounded, and the main process has the tool scripts loaded, so these
-    # tools skip the cost of starting a worker. Searches scan a whole file and stay in a worker.
-    return $Name -cin @('read_file', 'list_files')
+    param([hashtable]$Session, [string]$Name, $ToolArguments)
+    # Reading a file of at most 256 KiB is short work: it is read whole, and the main process has the tool
+    # scripts loaded, so it skips the cost of starting a worker. A page limits output, not work: a deeper page
+    # of a larger file scans every line before it, and listings and searches cover a whole directory or file.
+    # Those stay in workers, which have a time budget and stop at once.
+    if ($Name -cne 'read_file') { return $false }
+    try { $path = Resolve-FlintFileTarget $Session.Root $Name $ToolArguments $Session.ProtectedPaths -SessionId $Session.Id }
+    catch { return $true }
+    $entry = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    return -not $entry -or $entry.PSIsContainer -or $entry.Length -le 262144
 }
 
 function Invoke-FlintInProcessTool {
     param([hashtable]$Session, [string]$Name, $ToolArguments)
-    # The stop key is checked between calls; a page read is short enough to finish first.
+    # The stop key is checked between calls; a read of at most 256 KiB finishes first.
     $started = [datetime]::UtcNow
     try { $result = Invoke-FlintFileTool $Session.Root $Name $ToolArguments $Session.ProtectedPaths -SessionId $Session.Id }
     catch { $result = @{ status = 'error'; exit_code = $null; output = $_.Exception.Message; retryable = $false; duration_ms = 0; failure = Get-FlintFailureDetails $Session $_ } }
@@ -106,7 +112,7 @@ function Invoke-AgentTool {
             Show-FlintActivity $Session (Get-FlintToolLabel $Name $parsed)
             if ($Name -ceq 'azure_request') {
                 $result = Invoke-FlintAzureRequest $Session $parsed $invocation -TimeoutSec $remaining
-            } elseif (Test-FlintInProcessTool $Name) {
+            } elseif (Test-FlintInProcessTool $Session $Name $parsed) {
                 $result = Invoke-FlintInProcessTool $Session $Name $parsed
             } else {
                 $result = Invoke-FlintWorker $Session $Name $parsed -TimeoutSec $remaining -CommandInvocation $invocation -WriteDirectory $permission.directory

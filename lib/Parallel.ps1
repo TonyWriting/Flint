@@ -54,13 +54,14 @@ function Invoke-FlintParallelTools {
         foreach ($call in $Calls) {
             if (Test-FlintStopKey $Session) { throw 'Stopped by the user.' }
             $state = @{ call = $call; parsed = $null; plan = $null; started = [datetime]::UtcNow; result = $null
-                worker = $null; done = $false; attempt = 0; next_attempt = [datetime]::UtcNow; access_token = $null; budget = $Session.ToolTimeoutSec }
+                worker = $null; done = $false; attempt = 0; next_attempt = [datetime]::UtcNow; access_token = $null; budget = $Session.ToolTimeoutSec; in_process = $false }
             $states += $state; $Progress.tool_count++
             Write-FlintEvent $Session 'tool_started' @{ call_id = $call.call_id; name = $call.name; arguments = $call.arguments }
             try {
                 $state.plan = Get-FlintParallelCall $Session $call
                 if (-not $state.plan) { throw 'This call is no longer classified for parallel read-only execution. Submit it again for normal authorization.' }
                 $state.parsed = $state.plan.arguments
+                $state.in_process = Test-FlintInProcessTool $Session $call.name $state.parsed
                 if ($state.plan.event) {
                     $permissionEvent = @{ call_id = $call.call_id; source = $state.plan.source; invocation = $state.plan.invocation }
                     if ($state.plan.rule_source) { $permissionEvent.rule_source = $state.plan.rule_source }
@@ -108,9 +109,9 @@ function Invoke-FlintParallelTools {
                         if ($remaining -le 0) { $state.result = @{ status = 'timeout'; exit_code = $null; retryable = $false; output = 'Tool time budget exhausted.' } }
                         elseif ($state.plan.azure -and $Session.Azure.Status -ne 'ready') {
                             $state.result = @{ status = 'authentication_required'; exit_code = $null; retryable = $false; output = 'Azure authentication is unavailable. Restart Flint to sign in.' }
-                        } elseif (Test-FlintInProcessTool $state.call.name) {
+                        } elseif ($state.in_process) {
                             # The batch's workers start first, so they run while the main process reads.
-                            $waiting = @($states | Where-Object { -not $_.done -and -not $_.result -and -not $_.worker -and -not (Test-FlintInProcessTool $_.call.name) -and [datetime]::UtcNow -ge $_.next_attempt })
+                            $waiting = @($states | Where-Object { -not $_.done -and -not $_.result -and -not $_.worker -and -not $_.in_process -and [datetime]::UtcNow -ge $_.next_attempt })
                             if ($waiting.Count -eq 0) { $state.result = Invoke-FlintInProcessTool $Session $state.call.name $state.parsed }
                         } else {
                             $state.worker = Start-FlintWorker $Session $state.call.name $state.parsed -TimeoutSec $remaining -CommandInvocation $state.plan.invocation -AzureAccessToken $state.access_token
@@ -126,6 +127,8 @@ function Invoke-FlintParallelTools {
                 }
                 if ($state.result) { Complete-FlintParallelCall $Session $state $Completed }
                 if ($Session.LogFailed) { throw 'Trajectory write failed. Stopping parallel tools.' }
+                # A read in the main process blocks key polling, so a stop pressed during it ends the batch here.
+                if ($state.in_process -and (Test-FlintStopKey $Session)) { throw 'Stopped by the user.' }
             }
             if (@($states | Where-Object { -not $_.done }).Count -gt 0) { Start-Sleep -Milliseconds 100 }
         }

@@ -124,6 +124,8 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
             $Session.TrajectoryPath = Join-Path $script:TestRoot 'missing\trajectory.jsonl'
             Write-FlintEvent $Session 'fixture_log_failure' @{} -BestEffort
         }
+        # The stop arrives while the first main-process read runs.
+        if ($script:StopMode -eq 'read' -and @($Session.History | Where-Object { $_.type -eq 'function_call_output' }).Count -ge 1) { $Session.StopRequested = $true }
         return [bool]$Session.StopRequested
     }
     Set-ParallelReplies @((New-ParallelRead 'fast-stop.txt'), (New-ParallelRead 'hang-stop.txt'), (New-ParallelRead 'never-stop.txt'))
@@ -134,6 +136,14 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     Assert-True (-not (Get-Process -Id $stopped.pid -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $stopped.request_path)) 'Stop every active worker on a user stop.'
     $saved = Read-FlintSession $Session.Id (Split-Path $Session.TrajectoryPath -Parent) $Session.Root
     Assert-True (@($saved.state.History | Where-Object { $_.type -eq 'function_call_output' }).Count -eq 3) 'Save paired parallel results for resume.'
+
+    # A stop during a main-process read ends the batch before the next read starts.
+    $script:StopMode = 'read'
+    $reads = @(foreach ($name in @('fast.txt', 'slow-1.txt', 'slow-2.txt')) { New-TestFunctionCall read_file @{ path = $name; start_line = 1; start_column = 1; max_lines = 230; json_path = $null } })
+    Set-ParallelReplies $reads
+    $null = Invoke-AgentTurn $Session 'Read until stopped.' 2
+    $outputs = Get-ParallelOutputs
+    Assert-True ($outputs[$reads[0].call_id].status -eq 'ok' -and $outputs[$reads[1].call_id].status -ne 'ok' -and $outputs[$reads[2].call_id].status -ne 'ok') ('Stop after the current main-process read. Got: ' + ((@($reads) | ForEach-Object { [string]$outputs[$_.call_id].status }) -join ', '))
 
     $script:StopMode = ''
     function Resolve-FlintCommandProgram { param($Executor); return @{ path = (Join-Path $script:TestRoot 'kubectl.exe') } }

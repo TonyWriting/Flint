@@ -21,16 +21,24 @@ try {
     Assert-True ((Invoke-TestTool edit_file @{ path = 'wipe.txt'; old_str = 'remove me'; new_str = '' }).status -eq 'ok') 'Verify an edit that makes the file empty.'
     $replaced = Invoke-TestTool write_file @{ path = 'note.txt'; content = "replacement`n$unicode" }
     Assert-True ($replaced.status -eq 'ok' -and $replaced.output -ceq ('Replaced an existing file of ' + ("beta`r`n$unicode`r`nalpha").Length + ' characters, read back and verified: note.txt')) ('Overwrite a complete file and report the replaced size. ' + $replaced.output)
-    # File pages and directory pages run in the main process; a search still needs a worker.
+    # A file of at most 256 KiB is read in the main process. Larger files, listings and searches can take
+    # unbounded work, so they keep a worker's time budget and immediate stop.
+    Set-Content -LiteralPath (Join-Path $WorkRoot 'large.txt') -Value ('x' * 262145) -Encoding ASCII -NoNewline
     $originalWorker = $Session.WorkerPath
     $Session.WorkerPath = Join-Path $TestRoot 'missing-worker.ps1'
     try {
-        $inProcess = Invoke-TestTool read_file @{ path = 'note.txt' }
-        Assert-True ($inProcess.status -eq 'ok' -and (Invoke-TestTool list_files @{ path = '.' }).status -eq 'ok') 'Read files and list directories without a worker process.'
-        Assert-True ((Invoke-TestTool search_text @{ path = 'note.txt'; keyword = 'replacement' }).status -ne 'ok') 'Keep searches in a worker process.'
+        Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).status -eq 'ok') 'Read a small file without a worker process.'
+        foreach ($call in @(
+            @{ name = 'read_file'; arguments = @{ path = 'large.txt' } },
+            @{ name = 'list_files'; arguments = @{ path = '.' } },
+            @{ name = 'search_text'; arguments = @{ path = 'note.txt'; keyword = 'replacement' } }
+        )) { Assert-True ((Invoke-TestTool $call.name $call.arguments).status -ne 'ok') ('Keep potentially long work in a worker process: ' + $call.name) }
     } finally { $Session.WorkerPath = $originalWorker }
-    $finished = @(Get-TestEvents | Where-Object { $_.event -eq 'tool_finished' -and $_.data.name -eq 'read_file' })[-1]
-    Assert-True ($null -ne $finished.timing.in_process_ms -and $null -eq $finished.timing.worker) 'Record the in-process time of a read.'
+    $reads = @(Get-TestEvents | Where-Object { $_.event -eq 'tool_finished' -and $_.data.name -eq 'read_file' })
+    Assert-True ($null -ne $reads[-2].timing.in_process_ms -and $null -eq $reads[-2].timing.worker) 'Record the in-process time of a small read.'
+    Assert-True ((Invoke-TestTool read_file @{ path = 'large.txt' }).status -eq 'ok') 'Read a large file through a worker.'
+    $large = @(Get-TestEvents | Where-Object { $_.event -eq 'tool_finished' -and $_.data.name -eq 'read_file' })[-1]
+    Assert-True ($null -eq $large.timing.in_process_ms -and $null -ne $large.timing.worker) 'Record the worker time of a large read.'
     Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).output -ceq "replacement`n$unicode") 'Verify the complete replacement.'
     Assert-True ((Invoke-TestTool write_file @{ path = 'note.txt'; content = '' }).status -eq 'ok') 'Allow an explicit empty replacement.'
     Assert-True ((Invoke-TestTool read_file @{ path = 'note.txt' }).output -ceq '') 'Verify the existing file was emptied.'
