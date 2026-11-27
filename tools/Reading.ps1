@@ -99,7 +99,7 @@ function Select-FlintJsonValue {
 function Read-FlintJsonValue {
     param([string]$Path, $ToolArguments)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw 'File does not exist or is a directory.' }
-    if ($ToolArguments.start_line -ne 1) { throw 'With json_path, use start_line 1 and continue a long value with next_column.' }
+    if ($ToolArguments.start_line -ne 1 -or $ToolArguments.start_column -ne 1) { throw 'With json_path, use start_line 1 and start_column 1; select a narrower path instead of paging.' }
     $entry = Get-Item -LiteralPath $Path -ErrorAction Stop
     if ($entry.Length -gt 8388608) { throw 'json_path reads JSON files of at most 8 MiB.' }
     $content = [string](Get-Content -LiteralPath $Path -Raw -Encoding UTF8 -ErrorAction Stop)
@@ -109,7 +109,6 @@ function Read-FlintJsonValue {
     $selected = Select-FlintJsonValue $document $ToolArguments.json_path
     Assert-FlintResultJsonDepth $selected
     # A string comes back as its text, which redaction treats like any text; other values are compact JSON.
-    # Either way the value is one page sequence that continues by column like a long line.
     if ($selected -is [string]) { $text = $selected; $type = 'string' }
     else {
         $text = ConvertTo-Json -InputObject $selected -Depth 100 -Compress
@@ -119,15 +118,19 @@ function Read-FlintJsonValue {
         elseif ($selected -is [bool]) { $type = 'boolean' }
         else { $type = 'number' }
     }
-    $state = @{
-        output = ''; line = 0; lines_returned = 0; truncated = $false; next_line = $null; next_column = $null
-        start_line = 1; start_column = $ToolArguments.start_column; max_lines = 1
+    # A value always fits one page, so redaction sees it whole: pages would cut JSON apart. A longer value
+    # returns the sizes below it, which lead to a narrower path.
+    if ($text.Length -gt 32768) {
+        $detail = ''
+        if ($selected -is [array]) { $detail = ' It has ' + $selected.Count + ' items; select one with [index].' }
+        elseif ($selected -is [pscustomobject]) {
+            $sizes = @($selected.PSObject.Properties | Select-Object -First 50 | ForEach-Object { $_.Name + ' (' + (ConvertTo-Json -InputObject $_.Value -Depth 100 -Compress).Length + ')' })
+            $detail = ' Properties with their sizes: ' + ($sizes -join ', ') + '.'
+        }
+        throw ('The value at ' + $ToolArguments.json_path + ' has ' + $text.Length + ' characters, more than one 32768-character page. Select a narrower json_path, or read the file without json_path.' + $detail)
     }
-    $null = Add-FlintReadLine $state $text
     return @{
-        status = 'ok'; exit_code = 0; output = $state.output; retryable = $false; duration_ms = 0
-        truncated = $state.truncated; next_line = $state.next_line; next_column = $state.next_column
-        start_line = 1; start_column = $state.start_column; json_path = $ToolArguments.json_path; value_type = $type
-        value_chars = $text.Length; size_bytes = $entry.Length
+        status = 'ok'; exit_code = 0; output = $text; retryable = $false; duration_ms = 0; truncated = $false
+        json_path = $ToolArguments.json_path; value_type = $type; value_chars = $text.Length; size_bytes = $entry.Length
     }
 }

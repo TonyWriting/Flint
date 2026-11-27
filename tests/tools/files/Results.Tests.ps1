@@ -78,14 +78,11 @@ try {
     Assert-True ($item.status -eq 'ok' -and $item.value_type -eq 'object' -and -not $item.truncated -and -not $item.output.Contains("`n") -and $value.name -ceq 'last-record-marker' -and $value.password -ceq '[redacted]') ('Select one item of a saved result. ' + $item.output)
     $name = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[1].name' }
     Assert-True ($name.output -ceq 'last-record-marker' -and $name.value_type -eq 'string') 'Return a selected string as its text.'
-    $page = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[0].details' }
-    Assert-True ($page.truncated -and $page.next_line -eq 1 -and $page.output.Length -eq 32768 -and $page.value_chars -eq 300000) 'Page a long value within the context budget.'
-    $joined = $page.output
-    while ($page.truncated) {
-        $page = Invoke-FlintFileTool $Session.Root read_file @{ path = $saved.result_path; json_path = 'value[0].details'; start_line = 1; start_column = $page.next_column; max_lines = 230 } $Session.ProtectedPaths -SessionId $Session.Id
-        $joined += $page.output
-    }
-    Assert-True ($joined -ceq ('x' * 300000)) 'Continue a long value by column without gaps.'
+    # A selected value always fits one page, so redaction sees it whole; a longer one points to a narrower path.
+    $long = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[0].details' }
+    Assert-True ($long.status -eq 'error' -and $long.output -like '*value`[0`].details has 300000 characters*narrower json_path*') ('Do not page a selected string. ' + $long.output)
+    $list = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value' }
+    Assert-True ($list.status -eq 'error' -and $list.output -like '*It has 2 items; select one with `[index`].*') ('Give the item count of a long array. ' + $list.output)
     # A local JSON file is not redacted before it is read, so selection must not lose the field that holds a credential.
     Set-Content -LiteralPath (Join-Path $Session.Root 'settings.json') -Encoding UTF8 -Value '{"settings":{"password":"hunter2","token":{"inner":"tok-private"}},"message":"password=hidden","notes":["password=hidden","password=\"[redacted]\""]}'
     foreach ($selection in @('settings.password', 'settings.token.inner')) {
@@ -98,6 +95,13 @@ try {
     # Windows PowerShell returns a decoded JSON array as one object, so it is assigned without @().
     $decodedNotes = ConvertFrom-Json -InputObject $notes.output
     Assert-True ($notes.value_type -eq 'array' -and $decodedNotes.Count -eq 2 -and -not $notes.output.Contains('hidden')) ('Keep selected JSON valid while redacting it. ' + $notes.output)
+    # A credential subtree past the first page is never returned in pieces; the sizes lead to a narrower path.
+    Set-Content -LiteralPath (Join-Path $Session.Root 'large.json') -Encoding UTF8 -Value ('{"big":{"pad":"' + ('p' * 32740) + '","secret":{"inner":"leak-value-1","list":["leak-value-2"]}}}')
+    $big = Invoke-TestTool read_file @{ path = 'large.json'; json_path = 'big' }
+    Assert-True ($big.status -eq 'error' -and -not $big.output.Contains('leak-value') -and $big.output -like '*Properties with their sizes: pad (32742), secret (*') ('List sizes instead of paging a long object. ' + $big.output)
+    $narrow = Invoke-TestTool read_file @{ path = 'large.json'; json_path = 'big.secret' }
+    Assert-True ($narrow.status -eq 'ok' -and $narrow.output -ceq '[redacted]') 'Redact the narrower credential selection.'
+    Assert-True ((Invoke-TestTool read_file @{ path = 'large.json'; json_path = 'big.secret'; start_column = 2 }).output -like '*start_column 1*') 'Do not page a selected value.'
     $whole = Invoke-TestTool read_file @{ path = 'settings.json'; json_path = 'settings' }
     $decodedWhole = ConvertFrom-Json -InputObject $whole.output
     Assert-True ($decodedWhole.password -ceq '[redacted]' -and $decodedWhole.token -ceq '[redacted]' -and -not $whole.output.Contains('tok-private')) ('Redact credential fields inside a selected object. ' + $whole.output)
@@ -106,7 +110,7 @@ try {
     $range = Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value[5]' }
     Assert-True ($range.status -eq 'error' -and $range.output -like '*$.value has 2 items*') 'Report the array length for an index out of range.'
     Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'value..name' }).output -like '*property names separated by dots*') 'Reject a malformed path.'
-    Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'nextLink'; start_line = 2 }).output -like '*use start_line 1*') 'Page a selected value by column only.'
+    Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = 'nextLink'; start_line = 2 }).output -like '*use start_line 1*') 'Read a selected value from its start.'
     Assert-True ((Invoke-TestTool read_file @{ path = $saved.result_path; json_path = ('nextLink' + [char]10) }).output -like '*single-line json_path*') 'Validate json_path before the worker runs.'
     Set-Content -LiteralPath (Join-Path $Session.Root 'plain.txt') -Value 'not json' -Encoding UTF8
     $plain = Invoke-TestTool read_file @{ path = 'plain.txt'; json_path = 'status' }

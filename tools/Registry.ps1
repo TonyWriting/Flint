@@ -13,7 +13,7 @@ function Get-AgentTools {
             $properties.start_line = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2147483647; description = 'First line to read, 1-based. Start with 1.' }
             $properties.start_column = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2147483647; description = 'First UTF-16 character of the first line, 1-based. Start with 1.' }
             $properties.max_lines = [ordered]@{ type = 'integer'; minimum = 1; maximum = 2000; description = 'Maximum lines to return. Normally use 230.' }
-            $properties.json_path = [ordered]@{ type = @('string', 'null'); description = 'Null for a text page. For a JSON file, property names separated by dots, each optionally followed by [index], such as status or items[0].status.conditions: returns only that value, a string as its text and any other value as compact JSON on one line, with value_type. Use start_line 1, and continue a long value with next_column.' }
+            $properties.json_path = [ordered]@{ type = @('string', 'null'); description = 'Null for a text page. For a JSON file, property names separated by dots, each optionally followed by [index], such as status or items[0].status.conditions: returns only that value, a string as its text and any other value as compact JSON on one line, with value_type. Use start_line 1 and start_column 1. A value longer than 32768 characters is not returned; the error lists sizes below it for a narrower path.' }
             $required += @('start_line', 'start_column', 'max_lines', 'json_path')
         }
         if ($name -eq 'list_files') {
