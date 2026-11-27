@@ -6,7 +6,7 @@
 
 Flint 工作时，进度行显示 `Working (12s · s to stop · Ctrl+C to exit)`。按 `s` 只中止**当前这一轮**，会话保留并回到输入提示：
 
-- 读取类工具和模型请求立即中止，并结束对应的子进程。
+- 读取类工具和模型请求立即中止，并结束对应的子进程。文件读取和目录列表在主进程中执行，每次只读一页，读完这一页再中止。
 - 正在执行的写操作（文件写入、修改类的 kubectl 命令和 Azure 请求）先执行完，期间进度行显示 `Stopping after the current step`。这样每个修改的结果都是明确的。
 - 同一批中尚未开始的工具调用不再执行，结果记为 `skipped`。
 
@@ -43,6 +43,7 @@ Flint 把会话记录为**轨迹**，默认保存在工作目录的 `.flint/traj
 | | `worker.load_ms`、`worker.run_ms` | 子进程加载 Flint 脚本、执行工具，包括保存结果 |
 | | `worker.call_ms` | 其中 kubectl 进程或 Azure HTTP 请求本身 |
 | | `read_ms` | 读取子进程返回的结果 |
+| | `in_process_ms` | `read_file` 和 `list_files` 在主进程中执行的时间；它们不启动子进程，所以没有上面几项 |
 
 启动进程、退出和等待检测的开销，对工具调用是 `process_ms - worker.load_ms - worker.run_ms`，`worker.call_ms` 已包含在 `worker.run_ms` 中；对模型调用是 `process_ms - worker.load_ms - worker.request_ms - worker.serialize_ms - worker.http_ms`。没有交互终端时，模型请求在主进程中完成，`serialize_ms` 和 `http_ms` 直接位于 `timing` 下。
 

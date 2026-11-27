@@ -108,6 +108,10 @@ function Invoke-FlintParallelTools {
                         if ($remaining -le 0) { $state.result = @{ status = 'timeout'; exit_code = $null; retryable = $false; output = 'Tool time budget exhausted.' } }
                         elseif ($state.plan.azure -and $Session.Azure.Status -ne 'ready') {
                             $state.result = @{ status = 'authentication_required'; exit_code = $null; retryable = $false; output = 'Azure authentication is unavailable. Restart Flint to sign in.' }
+                        } elseif (Test-FlintInProcessTool $state.call.name) {
+                            # The batch's workers start first, so they run while the main process reads.
+                            $waiting = @($states | Where-Object { -not $_.done -and -not $_.result -and -not $_.worker -and -not (Test-FlintInProcessTool $_.call.name) -and [datetime]::UtcNow -ge $_.next_attempt })
+                            if ($waiting.Count -eq 0) { $state.result = Invoke-FlintInProcessTool $Session $state.call.name $state.parsed }
                         } else {
                             $state.worker = Start-FlintWorker $Session $state.call.name $state.parsed -TimeoutSec $remaining -CommandInvocation $state.plan.invocation -AzureAccessToken $state.access_token
                         }

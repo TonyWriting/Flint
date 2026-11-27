@@ -9,8 +9,9 @@ function Invoke-AgentResponse {
     return $reply
 }
 function New-ParallelRead {
-    param([string]$Path)
-    return New-TestFunctionCall read_file @{ path = $Path; start_line = 1; start_column = 1; max_lines = 200; json_path = $null }
+    param([string]$Path, [string]$Keyword = 'original')
+    # Searches run in workers; file reads run in the main process.
+    return New-TestFunctionCall search_text @{ path = $Path; keyword = $Keyword; start_line = 1; max_matches = 50 }
 }
 function Set-ParallelReplies {
     param([object[]]$Calls)
@@ -58,20 +59,30 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     }
     $a = New-ParallelRead 'slow-a.txt'; $b = New-ParallelRead 'slow-b.txt'
     $write = New-TestFunctionCall write_file @{ path = 'changed.txt'; content = 'updated' }
-    $after = New-ParallelRead 'changed.txt'; $fast = New-ParallelRead 'fast.txt'
+    $after = New-ParallelRead 'changed.txt' 'updated'; $fast = New-ParallelRead 'fast.txt'
     Set-ParallelReplies @($a, $b, $write, $after, $fast)
     Assert-True ((Invoke-AgentTurn $Session 'Read, update, and verify.' 2) -eq 'Done.') 'Complete a mixed tool batch.'
-    $aStart = Read-ParallelTrace 'read_file-slow-a.txt' start; $aEnd = Read-ParallelTrace 'read_file-slow-a.txt' end
-    $bStart = Read-ParallelTrace 'read_file-slow-b.txt' start; $bEnd = Read-ParallelTrace 'read_file-slow-b.txt' end
+    $aStart = Read-ParallelTrace 'search_text-slow-a.txt' start; $aEnd = Read-ParallelTrace 'search_text-slow-a.txt' end
+    $bStart = Read-ParallelTrace 'search_text-slow-b.txt' start; $bEnd = Read-ParallelTrace 'search_text-slow-b.txt' end
     $writeStart = Read-ParallelTrace 'write_file-changed.txt' start; $writeEnd = Read-ParallelTrace 'write_file-changed.txt' end
-    $afterStart = Read-ParallelTrace 'read_file-changed.txt' start
+    $afterStart = Read-ParallelTrace 'search_text-changed.txt' start
     Assert-True ($aStart.ticks -lt $bEnd.ticks -and $bStart.ticks -lt $aEnd.ticks) 'Overlap independent read workers.'
     Assert-True ($writeStart.ticks -gt $aEnd.ticks -and $writeStart.ticks -gt $bEnd.ticks -and $afterStart.ticks -gt $writeEnd.ticks) 'Do not move reads across a write barrier.'
     $outputs = Get-ParallelOutputs
-    Assert-True ($outputs.Count -eq 5 -and $outputs[$after.call_id].output -ceq 'updated') 'Pair results with call IDs and observe the completed write.'
+    Assert-True ($outputs.Count -eq 5 -and $outputs[$after.call_id].matches_returned -eq 1) 'Pair results with call IDs and observe the completed write.'
     Assert-True ($aStart.mode -eq 'ConstrainedLanguage' -and -not (Test-Path -LiteralPath $aStart.request_path)) 'Run real constrained workers and remove their temporary requests.'
     Assert-True (@($Payloads[-1].input | Where-Object { $_.type -eq 'function_call_output' }).Count -eq 5) 'Send all tool results before the next model request.'
     Assert-True ((New-FlintPayload $Session).parallel_tool_calls) 'Allow the model to propose multiple tool calls.'
+
+    # A file read in a batch runs in the main process while the batch's workers run.
+    $slowSearch = New-ParallelRead 'slow-a.txt'
+    $read = New-TestFunctionCall read_file @{ path = 'fast.txt'; start_line = 1; start_column = 1; max_lines = 230; json_path = $null }
+    Set-ParallelReplies @($slowSearch, $read)
+    $null = Invoke-AgentTurn $Session 'Search and read.' 2
+    $outputs = Get-ParallelOutputs
+    $finishedOrder = @(Get-TestEvents | Where-Object { $_.event -eq 'tool_finished' } | ForEach-Object { $_.data.call_id })
+    Assert-True ($outputs[$read.call_id].output -ceq 'original' -and $outputs[$slowSearch.call_id].status -eq 'ok' -and $finishedOrder[0] -ceq $read.call_id -and
+        -not (Test-Path -LiteralPath (Join-Path $TraceDirectory 'read_file-fast.txt.start.json'))) 'Read a file in the main process while a batch worker runs.'
 
     $Session.MaxParallelTools = 2
     # With a limit of two, three slow reads need a second group.
@@ -79,8 +90,8 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     Set-ParallelReplies $calls
     $null = Invoke-AgentTurn $Session 'Read three files.' 2
     $timeline = @(foreach ($number in 1..3) {
-        $begin = Read-ParallelTrace ('read_file-slow-' + $number + '.txt') start
-        $end = Read-ParallelTrace ('read_file-slow-' + $number + '.txt') end
+        $begin = Read-ParallelTrace ('search_text-slow-' + $number + '.txt') start
+        $end = Read-ParallelTrace ('search_text-slow-' + $number + '.txt') end
         @{ ticks = $begin.ticks; delta = 1 }; @{ ticks = $end.ticks; delta = -1 }
     })
     $active = 0; $peak = 0
@@ -91,7 +102,7 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     Set-ParallelReplies @((New-ParallelRead 'fast.txt'), (New-ParallelRead 'never-limit.txt'))
     Assert-Throws { Invoke-AgentTurn $Session 'Read within the limit.' 2 } '*Tool-call limit*'
     $outputs = Get-ParallelOutputs
-    Assert-True ($outputs.Count -eq 2 -and 'skipped' -in $outputs.Values.status -and -not (Test-Path -LiteralPath (Join-Path $TraceDirectory 'read_file-never-limit.txt.start.json'))) 'Keep the tool budget and pair skipped calls.'
+    Assert-True ($outputs.Count -eq 2 -and 'skipped' -in $outputs.Values.status -and -not (Test-Path -LiteralPath (Join-Path $TraceDirectory 'search_text-never-limit.txt.start.json'))) 'Keep the tool budget and pair skipped calls.'
     $Session.MaxToolCalls = 40
     # Leave room for worker startup on a loaded machine; the hanging read still exceeds this budget.
     $Session.ToolTimeoutSec = 8
@@ -99,17 +110,17 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     $null = Invoke-AgentTurn $Session 'Read with independent timeouts.' 2
     $outputs = Get-ParallelOutputs
     Assert-True ('timeout' -in $outputs.Values.status -and 'ok' -in $outputs.Values.status) ('Let a successful sibling finish when another worker times out. Got: ' + ((@($outputs.Values) | ForEach-Object { [string]$_.status + '/' + [string]$_.duration_ms + 'ms' }) -join ', '))
-    $timedOut = Read-ParallelTrace 'read_file-hang-timeout.txt' start
+    $timedOut = Read-ParallelTrace 'search_text-hang-timeout.txt' start
     Assert-True (-not (Get-Process -Id $timedOut.pid -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $timedOut.request_path)) 'Clean up the timed-out worker and request.'
 
     $Session.ToolTimeoutSec = 20
     $script:StopMode = 'stop'
     function Test-FlintStopKey {
         param($Session)
-        if ($script:StopMode -eq 'stop' -and (Test-Path -LiteralPath (Join-Path $script:TraceDirectory 'read_file-hang-stop.txt.start.json')) -and
+        if ($script:StopMode -eq 'stop' -and (Test-Path -LiteralPath (Join-Path $script:TraceDirectory 'search_text-hang-stop.txt.start.json')) -and
             @($Session.History | Where-Object { $_.type -eq 'function_call_output' -and (ConvertFrom-Json $_.output).status -eq 'ok' }).Count -gt 0) { $Session.StopRequested = $true }
-        if ($script:StopMode -eq 'log' -and (Test-Path -LiteralPath (Join-Path $script:TraceDirectory 'read_file-hang-log.txt.start.json')) -and
-            (Test-Path -LiteralPath (Join-Path $script:TraceDirectory 'read_file-fast-log.txt.end.json'))) {
+        if ($script:StopMode -eq 'log' -and (Test-Path -LiteralPath (Join-Path $script:TraceDirectory 'search_text-hang-log.txt.start.json')) -and
+            (Test-Path -LiteralPath (Join-Path $script:TraceDirectory 'search_text-fast-log.txt.end.json'))) {
             $Session.TrajectoryPath = Join-Path $script:TestRoot 'missing\trajectory.jsonl'
             Write-FlintEvent $Session 'fixture_log_failure' @{} -BestEffort
         }
@@ -119,7 +130,7 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     $null = Invoke-AgentTurn $Session 'Read until stopped.' 2
     $outputs = Get-ParallelOutputs
     Assert-True ($outputs.Count -eq 3 -and 'ok' -in $outputs.Values.status -and 'stopped' -in $outputs.Values.status -and 'skipped' -in $outputs.Values.status) 'Preserve finished results, stop running reads and skip the next group.'
-    $stopped = Read-ParallelTrace 'read_file-hang-stop.txt' start
+    $stopped = Read-ParallelTrace 'search_text-hang-stop.txt' start
     Assert-True (-not (Get-Process -Id $stopped.pid -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $stopped.request_path)) 'Stop every active worker on a user stop.'
     $saved = Read-FlintSession $Session.Id (Split-Path $Session.TrajectoryPath -Parent) $Session.Root
     Assert-True (@($saved.state.History | Where-Object { $_.type -eq 'function_call_output' }).Count -eq 3) 'Save paired parallel results for resume.'
@@ -140,7 +151,7 @@ Set-Content -LiteralPath (Join-Path $traceDirectory ($traceName + '.end.json')) 
     $script:StopMode = 'log'
     Set-ParallelReplies @((New-ParallelRead 'fast-log.txt'), (New-ParallelRead 'hang-log.txt'), (New-TestFunctionCall write_file @{ path = 'must-not-write.txt'; content = 'unexpected' }))
     Assert-Throws { Invoke-AgentTurn $Session 'Stop on a log failure.' 2 } '*Trajectory*'
-    $hung = Read-ParallelTrace 'read_file-hang-log.txt' start
+    $hung = Read-ParallelTrace 'search_text-hang-log.txt' start
     Assert-True ($Session.LogFailed -and -not (Get-Process -Id $hung.pid -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath (Join-Path $WorkRoot 'must-not-write.txt'))) 'Kill concurrent reads and block a following write after logging fails.'
     Write-Host 'All parallel tool tests passed.'
 } finally { Remove-TestFixture }

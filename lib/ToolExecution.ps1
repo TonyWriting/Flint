@@ -17,6 +17,24 @@ function Complete-FlintToolResult {
     return $result
 }
 
+function Test-FlintInProcessTool {
+    param([string]$Name)
+    # A file page or directory page is bounded, and the main process has the tool scripts loaded, so these
+    # tools skip the cost of starting a worker. Searches scan a whole file and stay in a worker.
+    return $Name -cin @('read_file', 'list_files')
+}
+
+function Invoke-FlintInProcessTool {
+    param([hashtable]$Session, [string]$Name, $ToolArguments)
+    # The stop key is checked between calls; a page read is short enough to finish first.
+    $started = [datetime]::UtcNow
+    try { $result = Invoke-FlintFileTool $Session.Root $Name $ToolArguments $Session.ProtectedPaths -SessionId $Session.Id }
+    catch { $result = @{ status = 'error'; exit_code = $null; output = $_.Exception.Message; retryable = $false; duration_ms = 0; failure = Get-FlintFailureDetails $Session $_ } }
+    # Complete-FlintToolResult redacts the result and records this timing in the trajectory.
+    $result.timing = [ordered]@{ in_process_ms = Get-FlintElapsedMs $started }
+    return $result
+}
+
 function Invoke-FlintCommandSignIn {
     param([hashtable]$Session, $Invocation)
     # Runs the original read in the foreground: kubectl chooses the credentials as usual, and its credential plugin
@@ -88,6 +106,8 @@ function Invoke-AgentTool {
             Show-FlintActivity $Session (Get-FlintToolLabel $Name $parsed)
             if ($Name -ceq 'azure_request') {
                 $result = Invoke-FlintAzureRequest $Session $parsed $invocation -TimeoutSec $remaining
+            } elseif (Test-FlintInProcessTool $Name) {
+                $result = Invoke-FlintInProcessTool $Session $Name $parsed
             } else {
                 $result = Invoke-FlintWorker $Session $Name $parsed -TimeoutSec $remaining -CommandInvocation $invocation -WriteDirectory $permission.directory
             }

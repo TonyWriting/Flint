@@ -55,7 +55,7 @@ function Invoke-AgentResponse {
     param($Session, $Payload)
     if ($During -eq 'Parallel') {
         return @{ status = 'completed'; output = @(foreach ($name in @('parallel-a.txt', 'parallel-b.txt', 'parallel-never.txt')) {
-            @{ type = 'function_call'; call_id = $name; name = 'read_file'; arguments = (ConvertTo-Json @{ path = $name; start_line = 1; start_column = 1; max_lines = 200; json_path = $null } -Compress) }
+            @{ type = 'function_call'; call_id = $name; name = 'search_text'; arguments = (ConvertTo-Json @{ path = $name; keyword = 'x'; start_line = 1; max_matches = 50 } -Compress) }
         }) }
     }
     if ($During -eq 'Azure') {
@@ -71,8 +71,8 @@ function Invoke-AgentResponse {
         ) }
     }
     return @{ status = 'completed'; output = @(
-        @{ type = 'function_call'; call_id = 'call_1'; name = 'read_file'; arguments = '{"path":"file.txt","start_line":1,"start_column":1,"max_lines":200,"json_path":null}' },
-        @{ type = 'function_call'; call_id = 'call_2'; name = 'read_file'; arguments = '{"path":"file.txt","start_line":1,"start_column":1,"max_lines":200,"json_path":null}' }
+        @{ type = 'function_call'; call_id = 'call_1'; name = 'search_text'; arguments = '{"path":"file.txt","keyword":"x","start_line":1,"max_matches":50}' },
+        @{ type = 'function_call'; call_id = 'call_2'; name = 'search_text'; arguments = '{"path":"file.txt","keyword":"x","start_line":1,"max_matches":50}' }
     ) }
 }
 }
