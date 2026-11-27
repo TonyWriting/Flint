@@ -18,7 +18,7 @@ Flint 由入口脚本、运行机制和模型工具三部分组成。`lib/` 是 
 
 判断代码归属时看它负责什么：Windows 进程参数转义属于 `lib/Runtime.ps1`，Azure token 获取属于 `tools/azure/Auth.ps1`，kubectl 参数约束属于 `tools/Commands.ps1`。工具专用的代码即使被多处调用，也放在对应的工具目录。
 
-`run_command` 按执行器（executor）组织：每次调用写明要运行的程序，只读规则和会话内的批准都按执行器分开保存，这部分在 `lib/Permissions.ps1` 中与具体程序无关。目前唯一的执行器是 kubectl，程序查找、参数约束和登录检测都在 `tools/Commands.ps1` 中按 kubectl 实现，插件清单也只有 `kubectl` 一项。增加执行器时，除了在 `tools/Registry.ps1` 放开 `executor` 的取值，还要为新程序实现这几部分，并提供它自己的只读规则文件。
+`run_command` 按执行器（executor）组织：每次调用写明要运行的程序，只读规则和会话内的批准都按执行器分开保存，这部分在 `lib/Permissions.ps1` 中与具体程序无关。目前唯一的执行器是 kubectl，程序查找、参数约束、登录检测，以及把一次查询多种资源的读取拆开匹配规则，都在 `tools/Commands.ps1` 中按 kubectl 实现，插件清单也只有 `kubectl` 一项。增加执行器时，除了在 `tools/Registry.ps1` 放开 `executor` 的取值，还要为新程序实现这几部分，并提供它自己的只读规则文件。
 
 ## 运行测试
 

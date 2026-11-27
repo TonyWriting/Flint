@@ -78,6 +78,39 @@ function Assert-FlintKubectlMutation {
     }
 }
 
+function Split-FlintCommandRead {
+    param([string]$Executor, [string[]]$Arguments)
+    # kubectl get and describe take several types in one call ("pods,services") or TYPE/NAME pairs. Each part
+    # names one type with the same options, so the per-type rules decide, and the call is read-only only when every part is.
+    $whole = @(@{ arguments = $Arguments })
+    if ($Executor -cne 'kubectl' -or $Arguments.Count -lt 2 -or $Arguments[0] -cnotin @('get', 'describe')) { return $whole }
+    $end = 1
+    while ($end -lt $Arguments.Count -and -not $Arguments[$end].StartsWith('-')) { $end++ }
+    if ($end -eq 1) { return $whole }
+    $words = @($Arguments[1..($end - 1)])
+    $options = @()
+    if ($end -lt $Arguments.Count) { $options = @($Arguments[$end..($Arguments.Count - 1)]) }
+    $groups = @()
+    if ($words[0].Contains('/')) {
+        # kubectl accepts TYPE/NAME pairs only on their own, so every word before the options is one pair.
+        foreach ($word in $words) {
+            $pair = @($word -split '/')
+            if ($pair.Count -ne 2 -or -not $pair[0] -or -not $pair[1]) { return $whole }
+            $group = @($groups | Where-Object { $_.type -ceq $pair[0] })
+            if ($group.Count -eq 0) { $group = @(@{ type = $pair[0]; names = @() }); $groups += $group[0] }
+            $group[0].names += $pair[1]
+        }
+    } elseif ($words[0].Contains(',')) {
+        $names = @()
+        if ($words.Count -gt 1) { $names = @($words[1..($words.Count - 1)]) }
+        foreach ($type in ($words[0] -split ',')) {
+            if (-not $type) { return $whole }
+            $groups += @{ type = $type; names = $names }
+        }
+    } else { return $whole }
+    return @(foreach ($group in $groups) { @{ arguments = @($Arguments[0], $group.type) + $group.names + $options } })
+}
+
 function New-FlintCommandInvocation {
     param([hashtable]$Session, $ToolArguments)
     Assert-FlintKubectlMutation $ToolArguments.arguments @($Session.GuardedPatchResources)
