@@ -35,6 +35,17 @@ function Invoke-AgentTurn {
             Add-FlintUsage $Session $response.usage
             # Tools below run the arguments as the model wrote them. Everything kept, shown or resent uses this redacted copy.
             $safe = Protect-FlintValue $Session $response
+            if ($safe.status -eq 'incomplete' -and $safe.incomplete_details.reason -ceq 'max_output_tokens') {
+                # The service returns what it wrote before the limit. The text joins the conversation so /c continues it;
+                # a cut-off tool call may have incomplete arguments, so none from this response runs.
+                $reason = 'output_limit'
+                $partial = @($safe.output | Where-Object { $_.type -eq 'message' } | ForEach-Object { Get-FlintMessageText $_ }) -join [Environment]::NewLine
+                if ($partial) { $Session.History += @{ role = 'assistant'; content = $partial } }
+                $Session.History += @{ role = 'developer'; content = 'Your previous response reached the output token limit and was cut off; tool calls in it were not run. When asked to continue, continue from where the text stopped without repeating it.' }
+                $notice = 'The answer reached the output limit of {0:N0} tokens and was cut off. Send /c to continue it.' -f $Session.MaxOutputTokens
+                if (-not $partial) { throw ('The response reached the output limit of {0:N0} tokens before any answer. Send /c to try again.' -f $Session.MaxOutputTokens) }
+                return (Protect-FlintText $Session $partial) + [Environment]::NewLine + [Environment]::NewLine + '**' + $notice + '**'
+            }
             if ($safe.status -ne 'completed') {
                 throw ('Azure OpenAI did not complete the response: ' + (ConvertTo-Json -InputObject @{ status = $safe.status; error = $safe.error; incomplete_details = $safe.incomplete_details } -Depth 16 -Compress))
             }

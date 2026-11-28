@@ -178,12 +178,12 @@ function Show-FlintExit {
     $directory = Split-Path $Session.TrajectoryPath -Parent
     if ($directory -ine (Join-Path $Session.Root '.flint\trajectories')) { $command += " -TrajectoryDirectory '" + $directory.Replace("'", "''") + "'" }
     foreach ($option in @(
-        @{ Name = 'MaxTurns'; Value = $Session.TurnLimit; Default = 20 },
+        @{ Name = 'MaxTurns'; Value = $Session.TurnLimit; Default = 30 },
         @{ Name = 'ContextWindow'; Value = $Session.ContextWindow; Default = 0 },
-        @{ Name = 'MaxOutputTokens'; Value = $Session.MaxOutputTokens; Default = 4096 },
-        @{ Name = 'MaxToolCalls'; Value = $Session.MaxToolCalls; Default = 40 },
+        @{ Name = 'MaxOutputTokens'; Value = $Session.MaxOutputTokens; Default = 16384 },
+        @{ Name = 'MaxToolCalls'; Value = $Session.MaxToolCalls; Default = 80 },
         @{ Name = 'MaxParallelTools'; Value = $Session.MaxParallelTools; Default = 4 },
-        @{ Name = 'RequestTimeoutSec'; Value = $Session.RequestTimeoutSec; Default = 180 },
+        @{ Name = 'RequestTimeoutSec'; Value = $Session.RequestTimeoutSec; Default = 300 },
         @{ Name = 'ToolTimeoutSec'; Value = $Session.ToolTimeoutSec; Default = 30 }
     )) { if ($null -ne $option.Value -and $option.Value -ne $option.Default) { $command += ' -' + $option.Name + ' ' + $option.Value } }
     Write-Host 'To continue this session from the same directory, run:' -ForegroundColor DarkGray
