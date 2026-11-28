@@ -12,17 +12,14 @@ function Show-FlintSession {
     }
     if ($Session.ResumedFrom) { Write-Host 'Conversation restored. Send a message to continue.' -ForegroundColor DarkGray }
     if (-not $Details) { Write-Host 'Type a message. /help for commands.' -ForegroundColor DarkGray; return }
-    $limit = 'not configured'
-    if ($Session.ContextWindow -gt 0) { $limit = [string]$Session.ContextWindow }
     $lastInput = 'not reported'
     if ($null -ne $Session.LastInputTokens) { $lastInput = [string]$Session.LastInputTokens }
     $signIn = ''
     if ($Session.Azure.Provider) { $signIn = Get-FlintAzureProviderName $Session }
     foreach ($line in @(
         ('Azure: ' + $Session.Azure.Status), ('Azure sign-in: ' + $signIn), ('Azure account: ' + $Session.Azure.Account), ('Azure tenant: ' + $Session.Azure.Tenant),
-        ('Context window: ' + $limit), ('Last API input tokens: ' + $lastInput),
-        ('Estimated request tokens: ' + $Session.EstimatedTokens), ('Model calls: ' + $Session.ModelCalls),
-        ('Request characters: {0:N0} of {1:N0}; omitted tool outputs: {2}' -f $Session.RequestChars, $Session.MaxRequestChars, $Session.OmittedOutputs.Count),
+        ('Context: about {0:N0} of {1:N0} input tokens ({2:N0}-token window, {3:N0} reserved for the answer); omitted tool outputs: {4}' -f $Session.EstimatedTokens, ($Session.ContextWindow - $Session.MaxOutputTokens), $Session.ContextWindow, $Session.MaxOutputTokens, $Session.OmittedOutputs.Count),
+        ('Last API input tokens: ' + $lastInput), ('Model calls: ' + $Session.ModelCalls),
         ('Tool concurrency: ' + $Session.MaxParallelTools),
         ('Session tokens: in {0}, out {1}, cached {2}' -f $Session.InputTokens, $Session.OutputTokens, $Session.CachedTokens),
         ('Trajectory: ' + $Session.TrajectoryPath)
@@ -100,14 +97,14 @@ function Show-FlintContextTrimmed {
     param([hashtable]$Session, [int]$Count, [long]$Before, [long]$After)
     Clear-FlintProgress $Session
     Write-Host ('  ' + [char]0x2022 + (' Context trimmed: {0} earlier tool outputs omitted' -f $Count)) -ForegroundColor DarkGray
-    Write-Host ('    Request {0:N0} to {1:N0} characters; saved results remain readable.' -f $Before, $After) -ForegroundColor DarkGray
+    Write-Host ('    Request about {0:N0} to {1:N0} input tokens; saved results remain readable.' -f $Before, $After) -ForegroundColor DarkGray
 }
 
 function Show-FlintContextNearLimit {
-    param([hashtable]$Session, [long]$RequestChars, [long]$Limit)
+    param([hashtable]$Session, [long]$Tokens, [long]$Budget)
     Clear-FlintProgress $Session
     Write-Host '  ! Context is nearly full even after trimming earlier tool outputs.' -ForegroundColor Yellow
-    Write-Host ('    Request {0:N0} of {1:N0} characters. Finish this task, then start a new Flint session for the next one.' -f $RequestChars, $Limit) -ForegroundColor DarkGray
+    Write-Host ('    Request about {0:N0} of {1:N0} input tokens. Finish this task, then start a new Flint session for the next one.' -f $Tokens, $Budget) -ForegroundColor DarkGray
 }
 
 function Show-FlintAnswer {
@@ -179,7 +176,6 @@ function Show-FlintExit {
     if ($directory -ine (Join-Path $Session.Root '.flint\trajectories')) { $command += " -TrajectoryDirectory '" + $directory.Replace("'", "''") + "'" }
     foreach ($option in @(
         @{ Name = 'MaxTurns'; Value = $Session.TurnLimit; Default = 30 },
-        @{ Name = 'ContextWindow'; Value = $Session.ContextWindow; Default = 0 },
         @{ Name = 'MaxOutputTokens'; Value = $Session.MaxOutputTokens; Default = 16384 },
         @{ Name = 'MaxToolCalls'; Value = $Session.MaxToolCalls; Default = 80 },
         @{ Name = 'MaxParallelTools'; Value = $Session.MaxParallelTools; Default = 4 },

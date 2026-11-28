@@ -3,13 +3,13 @@ function New-AgentSession {
         [string]$ConfigFile,
         [int]$RequestTimeoutSec = 300, [int]$ToolTimeoutSec = 30,
         [int]$MaxToolCalls = 80, [int]$MaxOutputTokens = 16384,
-        [int]$ContextWindow = 0, [string]$TrajectoryDirectory, [string]$Resume,
+        [string]$TrajectoryDirectory, [string]$Resume,
         [switch]$NoAzure, [ValidateRange(1, 8)][int]$MaxParallelTools = 4, [string]$PluginDirectory
     )
     $root = Get-Item -LiteralPath (Get-Location).Path -Force -ErrorAction Stop
     if (-not $root.PSIsContainer -or $root.PSProvider.Name -ne 'FileSystem') { throw 'The current PowerShell location must be a filesystem directory.' }
     $config = Read-FlintConfig $ConfigFile
-    if ($ContextWindow -gt 0 -and $ContextWindow -le $MaxOutputTokens) { throw 'ContextWindow must exceed MaxOutputTokens.' }
+    if ($config.ContextWindow -le $MaxOutputTokens) { throw ('context_window in flint.ini must exceed MaxOutputTokens ({0}), which is reserved for each answer.' -f $MaxOutputTokens) }
     # Core rules are part of the installation; plugins add reviewed reads, guarded resources and knowledge for this session.
     $installRoot = Split-Path $PSScriptRoot -Parent
     if (-not $PluginDirectory) { $PluginDirectory = Get-FlintPluginDirectory }
@@ -51,7 +51,7 @@ function New-AgentSession {
         RequestTimeoutSec = $RequestTimeoutSec; ToolTimeoutSec = $ToolTimeoutSec
         TurnLimit = 30
         MaxToolCalls = $MaxToolCalls; MaxParallelTools = $MaxParallelTools; MaxOutputTokens = $MaxOutputTokens
-        ContextWindow = $ContextWindow; MaxRequestChars = 2000000; RequestChars = 0
+        ContextWindow = $config.ContextWindow; RequestChars = 0; LastRequestChars = $null; TrimmedChars = 0L
         HistoryLogged = 0; OmittedOutputs = @{}; ContextWarned = $false
         ModelCalls = 0; LastInputTokens = $null; LastOutputTokens = $null
         InputTokens = 0L; OutputTokens = 0L; CachedTokens = 0L
@@ -74,13 +74,16 @@ function New-AgentSession {
             $session.OmittedOutputs[[string]$item.call_id] = $placeholder.output
         }
         if ($saved.model -cne $session.Model) { $session.LastInputTokens = $null; $session.LastOutputTokens = $null; $session.EstimatedTokens = 0 }
+        # Current plugins and redaction can change the instructions, tools and history, so the restored request is not the
+        # one the saved usage measured. The first request after a resume is estimated from its size alone.
+        $session.LastRequestChars = $null; $session.TrimmedChars = 0L
     }
     # Instructions and tools are logged once per process; model requests reference them.
     Write-FlintEvent $session $startEvent @{
         root = $session.Root; model = $session.Model; language_mode = [string]$ExecutionContext.SessionState.LanguageMode
         powershell_version = [string]$PSVersionTable.PSVersion; request_timeout_sec = $RequestTimeoutSec
         tool_timeout_sec = $ToolTimeoutSec; max_tool_calls = $MaxToolCalls; max_parallel_tools = $MaxParallelTools
-        context_window = $ContextWindow; max_output_tokens = $MaxOutputTokens; reasoning_effort = $session.Effort
+        context_window = $session.ContextWindow; max_output_tokens = $MaxOutputTokens; reasoning_effort = $session.Effort
         resumed_from = $Resume; instructions = $session.Instructions; tools = $session.Tools
         plugins = @(Get-FlintPluginRecords $session.Plugins); plugin_errors = @($session.PluginErrors)
     }
@@ -93,6 +96,8 @@ function Add-FlintUsage {
     if ($Usage -and $null -ne $Usage.input_tokens -and $null -ne $Usage.output_tokens) {
         $Session.UsageReports++
         $Session.LastInputTokens = $Usage.input_tokens; $Session.LastOutputTokens = $Usage.output_tokens
+        # The request this usage measured; the next request is estimated from it plus what changed.
+        $Session.LastRequestChars = $Session.RequestChars; $Session.TrimmedChars = 0L
         $Session.InputTokens += [long]$Usage.input_tokens; $Session.OutputTokens += [long]$Usage.output_tokens
         $Session.CachedTokens += [long]$Usage.input_tokens_details.cached_tokens
         $Session.ReasoningTokens += [long]$Usage.output_tokens_details.reasoning_tokens

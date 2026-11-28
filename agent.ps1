@@ -9,7 +9,6 @@ param(
     [ValidateRange(1, 200)][int]$MaxToolCalls = 80,
     [ValidateRange(1, 8)][int]$MaxParallelTools = 4,
     [ValidateRange(256, 32768)][int]$MaxOutputTokens = 16384,
-    [ValidateRange(0, 2000000)][int]$ContextWindow = 0,
     [string]$TrajectoryDirectory,
     [switch]$NoAzure,
     [string]$Setup,
@@ -67,7 +66,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         $session = New-AgentSession -Resume $Resume `
             -RequestTimeoutSec $RequestTimeoutSec -ToolTimeoutSec $ToolTimeoutSec `
             -MaxToolCalls $MaxToolCalls -MaxParallelTools $MaxParallelTools -MaxOutputTokens $MaxOutputTokens `
-            -ContextWindow $ContextWindow -TrajectoryDirectory $TrajectoryDirectory `
+            -TrajectoryDirectory $TrajectoryDirectory `
             -NoAzure:$NoAzure
         $session.TurnLimit = $MaxTurns
         Show-FlintSession $session

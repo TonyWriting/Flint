@@ -257,6 +257,7 @@ function Save-FlintStagedConfig {
         '[model]'
         ('endpoint = ' + (Format-FlintIniValue $Model.ApiEndpoint))
         ('deployment = ' + (Format-FlintIniValue $Model.Model))
+        ('context_window = ' + $Model.ContextWindow)
         ('reasoning_effort = ' + $Effort)
     )
     if ($Model.ApiKeyHelp) { $lines += ('api_key_help = ' + (Format-FlintIniValue $Model.ApiKeyHelp)) }

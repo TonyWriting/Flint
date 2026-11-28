@@ -1,6 +1,5 @@
 #Requires -Version 5.1
-param([switch]$ResumeSaved, [int]$ContextWindow = 128000)
-$previewContextWindow = $ContextWindow
+param([switch]$ResumeSaved)
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'TestSupport.ps1')
 $app = New-TestRuntime (Join-Path $TestRoot 'app')
 Copy-Item -LiteralPath $config -Destination (Join-Path $app 'flint.ini')
@@ -26,7 +25,7 @@ if ($ResumeSaved) {
     Write-Host ('Offline resume test. Verify the saved conversation, then press Ctrl+C. The exit ID must stay ' + $resumeId + '.') -ForegroundColor DarkGray
 } else { Write-Host 'Offline console test. Enter a message, then press Ctrl+C after the answer. No network requests are made.' -ForegroundColor DarkGray }
 Push-Location -LiteralPath $WorkRoot
-try { & (Join-Path $app 'agent.ps1') -NoAzure -Resume $resumeId -ContextWindow $previewContextWindow }
+try { & (Join-Path $app 'agent.ps1') -NoAzure -Resume $resumeId }
 finally {
     try {
         $log = Get-ChildItem -LiteralPath (Join-Path $WorkRoot '.flint\trajectories') -Filter *.jsonl | Sort-Object LastWriteTime -Descending | Select-Object -First 1

@@ -26,7 +26,7 @@ function Get-FlintOmittedOutput {
 
 function Compress-FlintContext {
     # Returns the call IDs omitted by this pass; the caller rebuilds and records the request.
-    param([hashtable]$Session, [long]$RequestChars)
+    param([hashtable]$Session, [long]$ExcessChars)
     $history = @($Session.History)
     # A later model output shows the model has already read every output before it.
     $readEnd = -1
@@ -34,8 +34,7 @@ function Compress-FlintContext {
         $item = $history[$index]
         if ($item.type -in @('reasoning', 'function_call') -or ($item.type -eq 'message' -and $item.role -eq 'assistant')) { $readEnd = $index; break }
     }
-    $target = [long]($Session.MaxRequestChars * 0.3)
-    $excess = $RequestChars - $target
+    $excess = $ExcessChars
     $omitted = @()
     for ($index = 0; $index -lt $readEnd -and $excess -gt 0; $index++) {
         $item = $history[$index]
