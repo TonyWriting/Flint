@@ -16,7 +16,7 @@ api_key_help = Copy the API key from <where your team keeps it>.
 
 - `endpoint`：Azure AI Foundry Responses 接口的完整 HTTPS 地址，以 `/openai/v1/responses` 结尾，不含凭据、查询参数、fragment 或结尾斜杠。
 - `deployment`：模型的部署名。
-- `context_window`：这个部署的上下文窗口，单位是 token，包括请求和回答，4096～999999999 之间的整数，以模型的规格为准。Flint 按它限制每次请求的大小，见[上下文预算](Sessions.md#上下文预算)。
+- `context_window`：这个部署的上下文窗口，单位是 token，包括请求和回答，以模型的规格为准。Flint 按它限制每次请求的大小，见[上下文预算](Sessions.md#上下文预算)。
 - `reasoning_effort`：推理强度，可选 `none`、`low`、`medium`、`high`、`xhigh` 或 `max`，不区分大小写。强度越高，模型回答前思考得越久。可用的值取决于模型部署：部署不支持时，模型服务返回 HTTP 400 并列出它支持的值。
 - `api_key`：API key。
 - `api_key_help`：可选，最多 400 个字符，写明去哪里取 key。`-Setup` 结束时、`api_key` 还没填就启动时、模型拒绝 key（HTTP 401，通常是 key 已轮换）时，Flint 都会显示它。
