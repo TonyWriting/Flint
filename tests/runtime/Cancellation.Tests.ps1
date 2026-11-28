@@ -19,6 +19,7 @@ Set-Content -LiteralPath (Join-Path $testRoot 'flint.ini') -Encoding ASCII -Valu
     '[model]'
     'endpoint = https://test.services.ai.azure.com/openai/v1/responses'
     'deployment = test-deployment'
+    'context_window = 1050000'
     'reasoning_effort = medium'
     'api_key = test-api-key'
 )

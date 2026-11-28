@@ -98,7 +98,7 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
         Assert-True ($startupMessage -like $case.message) ('Explain the startup failure. Received: ' + $startupMessage)
         Assert-True (-not (Test-Path -LiteralPath $rejectedLogs)) 'Reject an invalid runtime or configuration before starting a session or making model requests.'
         if ($case.missing) {
-            foreach ($part in @('agent.ps1 -Setup', 'copy the template', 'flint.example.ini', 'endpoint, deployment, reasoning_effort and api_key under [model]')) {
+            foreach ($part in @('agent.ps1 -Setup', 'copy the template', 'flint.example.ini', 'endpoint, deployment, context_window, reasoning_effort and api_key under [model]')) {
                 Assert-True ($startupMessage.Contains($part)) ('Missing startup guidance: ' + $part + '. Received: ' + $startupMessage)
             }
             Assert-True (-not (Test-Path -LiteralPath $runtimeConfig)) 'Leave creation of the missing configuration to the user.'

@@ -170,12 +170,12 @@ try {
     $outputs = @($Session.History | Where-Object { $_.type -eq 'function_call_output' })
     Assert-True ($outputs.Count -eq 2 -and (ConvertFrom-Json $outputs[1].output).status -eq 'skipped') 'Pair skipped calls at the tool-call limit.'
     Reset-TestConversation
-    $Session.ContextWindow = 4100
+    $window = $Session.ContextWindow
+    $Session.ContextWindow = $Session.MaxOutputTokens + 100
     $before = $Requests.Count
-    Assert-Throws { Invoke-AgentTurn $Session 'Read.' 2 } '*Estimated context limit*'
-    Assert-True ($before -eq $Requests.Count) 'Stop before HTTP when context plus reserve exceeds the configured limit.'
-    $Session.ContextWindow = 0; $Session.MaxRequestChars = 10
-    Assert-Throws { Invoke-AgentTurn $Session 'Read.' 2 } '*character limit*'
+    Assert-Throws { Invoke-AgentTurn $Session 'Read.' 2 } '*Context window reached*'
+    Assert-True ($before -eq $Requests.Count) 'Stop before HTTP when the request and the answer reserve exceed the context window.'
+    $Session.ContextWindow = $window
 
     $rawLog = Get-Content -LiteralPath $Session.TrajectoryPath -Raw -Encoding UTF8
     Assert-True (-not $rawLog.Contains('test-api-key') -and -not $rawLog.Contains('hidden-value')) 'Never persist credentials in the trajectory.'
