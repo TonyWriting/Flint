@@ -261,8 +261,8 @@ function Save-FlintStagedConfig {
         ('reasoning_effort = ' + $Effort)
     )
     if ($Model.ApiKeyHelp) { $lines += ('api_key_help = ' + (Format-FlintIniValue $Model.ApiKeyHelp)) }
-    # The user pastes the key after the equals sign; Flint never reads it from the terminal.
-    if ($ApiKey) { $lines += ('api_key = ' + (Format-FlintIniValue $ApiKey)) } else { $lines += 'api_key =' }
+    # The user pastes the key after the equals sign and its space; Flint never reads it from the terminal.
+    if ($ApiKey) { $lines += ('api_key = ' + (Format-FlintIniValue $ApiKey)) } else { $lines += 'api_key = ' }
     # Staged next to the target, so replacing flint.ini later is a rename within one folder.
     $staged = Join-Path (Split-Path $Path -Parent) ('.flint-' + [guid]::NewGuid().ToString('N') + '.tmp')
     try { Set-Content -LiteralPath $staged -Value $lines -Encoding UTF8 -ErrorAction Stop }
