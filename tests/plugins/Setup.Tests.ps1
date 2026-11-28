@@ -77,7 +77,7 @@ try {
     $result = Install-FlintSetup $source $configPath $installRoot
     $lines = @(Get-Content -LiteralPath $configPath -Encoding UTF8)
     $written = Read-TestConfig $configPath
-    Assert-True ($lines[0] -like '; Written by agent.ps1 -Setup from *' -and $lines[-1] -ceq 'api_key =') 'Mark flint.ini as generated and end it with an empty api_key to fill in.'
+    Assert-True ($lines[0] -like '; Written by agent.ps1 -Setup from *' -and $lines[-1] -ceq 'api_key = ') 'Mark flint.ini as generated and end it with an empty api_key, followed by a space, to fill in.'
     Assert-True ($written['model.deployment'] -ceq 'team-model' -and $written['model.context_window'] -ceq '1050000' -and $written['model.reasoning_effort'] -ceq 'medium' -and $written['model.api_key_help'] -ceq 'Ask the team for the key.' -and -not $result.key_kept) 'Write the template, with its reasoning effort, without a key.'
     Assert-Throws { Read-FlintConfig $configPath } '*Set api_key under `[model`]. Ask the team for the key.*'
     Assert-True ((Test-Path -LiteralPath (Join-Path $installRoot 'example\plugin.json')) -and @($result.removed).Count -eq 0) 'Install the setup plugins.'
@@ -86,7 +86,7 @@ try {
     Assert-True (@(Get-ChildItem -LiteralPath $installRoot -Force | Where-Object { $_.Name.StartsWith('.') }).Count -eq 0) 'Leave no staging or backup directories behind.'
 
     # The user pastes the key into flint.ini and picks a reasoning effort; running setup again keeps both.
-    Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($lines -replace '^api_key =$', 'api_key = first-key') -replace '^reasoning_effort = medium$', 'reasoning_effort = XHIGH' -replace '^context_window = 1050000$', 'context_window = 123456')
+    Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($lines -replace '^api_key = $', 'api_key = first-key') -replace '^reasoning_effort = medium$', 'reasoning_effort = XHIGH' -replace '^context_window = 1050000$', 'context_window = 123456')
     $config = Read-FlintConfig $configPath
     Assert-True ($config.ApiKey -ceq 'first-key' -and $config.ApiKeyHelp -ceq 'Ask the team for the key.') 'Flint starts once the key is pasted.'
     $null = New-TestPlugin (Join-Path $source 'Plugins\example') -Version '1.1.0'
@@ -111,7 +111,7 @@ try {
     Set-Content -LiteralPath $blankConfig -Encoding UTF8 -Value @('[model]', $endpoint, 'deployment = team-model', 'api_key = "   "')
     $blankPlugins = Join-Path $TestRoot 'blank-plugins'
     $result = Install-FlintSetup $source $blankConfig $blankPlugins
-    Assert-True (-not $result.key_kept -and (Get-Content -LiteralPath $blankConfig -Encoding UTF8)[-1] -ceq 'api_key =') 'A blank key is not kept.'
+    Assert-True (-not $result.key_kept -and (Get-Content -LiteralPath $blankConfig -Encoding UTF8)[-1] -ceq 'api_key = ') 'A blank key is not kept.'
     Assert-True ((Read-TestConfig $blankConfig)['model.reasoning_effort'] -ceq 'medium') 'Without a reasoning effort in flint.ini, use the one from the setup folder.'
     $brokenConfig = Join-Path $TestRoot 'broken.ini'
     Set-Content -LiteralPath $brokenConfig -Encoding UTF8 -Value @('[model]', $endpoint, 'deployment = team-model', 'api_key = keep-this-key', 'colour = blue')

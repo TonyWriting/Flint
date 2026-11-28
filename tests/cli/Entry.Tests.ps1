@@ -134,7 +134,7 @@ if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
     Assert-True ($transcript.Contains('Ask the team for the key.') -and $transcript.Contains('Paste the key after "api_key =" in ' + $runtimeConfig) -and $transcript.Contains("& '" + $cliPath + "'")) ('Say where to get the key, where to paste it and how to start Flint: ' + $transcript)
     # The user pastes the key into flint.ini; running setup again keeps it.
     $lines = @(Get-Content -LiteralPath $runtimeConfig -Encoding UTF8)
-    Set-Content -LiteralPath $runtimeConfig -Encoding UTF8 -Value ($lines -replace '^api_key =$', 'api_key = pasted-team-key')
+    Set-Content -LiteralPath $runtimeConfig -Encoding UTF8 -Value ($lines -replace '^api_key = $', 'api_key = pasted-team-key')
     $output = & $powerShell -NoProfile -NonInteractive -File $setupLauncher -CliPath $cliPath -Setup $setupSource
     $transcript = $output -join "`n"
     Assert-True ($LASTEXITCODE -eq 0 -and $transcript.Contains('The API key in flint.ini was kept.') -and -not $transcript.Contains('Paste the key')) ('Keep the pasted key when setup runs again: ' + $transcript)
