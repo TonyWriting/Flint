@@ -51,7 +51,7 @@ function New-AgentSession {
         RequestTimeoutSec = $RequestTimeoutSec; ToolTimeoutSec = $ToolTimeoutSec
         TurnLimit = 30
         MaxToolCalls = $MaxToolCalls; MaxParallelTools = $MaxParallelTools; MaxOutputTokens = $MaxOutputTokens
-        ContextWindow = $config.ContextWindow; RequestChars = 0; LastRequestChars = $null
+        ContextWindow = $config.ContextWindow; RequestChars = 0; LastRequestChars = $null; TrimmedChars = 0L
         HistoryLogged = 0; OmittedOutputs = @{}; ContextWarned = $false
         ModelCalls = 0; LastInputTokens = $null; LastOutputTokens = $null
         InputTokens = 0L; OutputTokens = 0L; CachedTokens = 0L
@@ -73,7 +73,7 @@ function New-AgentSession {
             if (-not $placeholder) { throw 'The saved conversation is invalid.' }
             $session.OmittedOutputs[[string]$item.call_id] = $placeholder.output
         }
-        if ($saved.model -cne $session.Model) { $session.LastInputTokens = $null; $session.LastOutputTokens = $null; $session.LastRequestChars = $null; $session.EstimatedTokens = 0 }
+        if ($saved.model -cne $session.Model) { $session.LastInputTokens = $null; $session.LastOutputTokens = $null; $session.LastRequestChars = $null; $session.TrimmedChars = 0L; $session.EstimatedTokens = 0 }
     }
     # Instructions and tools are logged once per process; model requests reference them.
     Write-FlintEvent $session $startEvent @{
@@ -94,7 +94,7 @@ function Add-FlintUsage {
         $Session.UsageReports++
         $Session.LastInputTokens = $Usage.input_tokens; $Session.LastOutputTokens = $Usage.output_tokens
         # The request this usage measured; the next request is estimated from it plus what changed.
-        $Session.LastRequestChars = $Session.RequestChars
+        $Session.LastRequestChars = $Session.RequestChars; $Session.TrimmedChars = 0L
         $Session.InputTokens += [long]$Usage.input_tokens; $Session.OutputTokens += [long]$Usage.output_tokens
         $Session.CachedTokens += [long]$Usage.input_tokens_details.cached_tokens
         $Session.ReasoningTokens += [long]$Usage.output_tokens_details.reasoning_tokens
@@ -115,7 +115,7 @@ function Get-FlintMessageText {
 
 function Get-FlintCheckpointFields {
     return @('ModelCalls', 'InputTokens', 'OutputTokens', 'CachedTokens', 'ReasoningTokens',
-        'UsageReports', 'CachedReported', 'ReasoningReported', 'LastInputTokens', 'LastOutputTokens', 'LastRequestChars', 'EstimatedTokens')
+        'UsageReports', 'CachedReported', 'ReasoningReported', 'LastInputTokens', 'LastOutputTokens', 'LastRequestChars', 'TrimmedChars', 'EstimatedTokens')
 }
 
 function Save-FlintHistory {

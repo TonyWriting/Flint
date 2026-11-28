@@ -159,13 +159,54 @@ try {
     $rate.History += @{ role = 'user'; content = ('m' * 6000) }
     $null = New-FlintPayload $rate
     Assert-True ($rate.RequestChars -gt $measured -and $rate.EstimatedTokens -eq ($reported + [long](($rate.RequestChars - $measured) / 2) + 1)) 'Add two characters a token for content added since the measured request.'
-    $rate.LastRequestChars = $rate.RequestChars + 4000
-    $null = New-FlintPayload $rate
-    Assert-True ($rate.EstimatedTokens -eq ($reported - 1000 + 1)) 'Subtract omitted content at four characters a token, so trimming never makes the estimate fall short.'
-    $rate.LastRequestChars = $measured
     Write-FlintCheckpoint $rate
     $rateResumed = New-TestSession -Resume $rate.Id
-    Assert-True ($rateResumed.LastRequestChars -eq $measured -and $rateResumed.LastInputTokens -eq $reported) 'Keep the measured rate across a resume.'
+    Assert-True ($rateResumed.LastRequestChars -eq $measured -and $rateResumed.LastInputTokens -eq $reported) 'Keep the measured request across a resume.'
+
+    # After reported usage, trimming stops where the estimate reaches the target, crediting omissions at eight characters a token.
+    $trim = New-TestSession
+    $trim.History = @(@{ role = 'user'; content = 'Read every page.' })
+    foreach ($index in 1..20) {
+        $trim.History += New-TestCall ('page_' + $index) 'read_file' ('{"path":"page' + $index + '.txt","start_line":1,"start_column":1,"max_lines":200}') @{ status = 'ok'; exit_code = 0; output = ('p' * 30000) }
+    }
+    $trim.History += @{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = 'Read every page.' }) }
+    Set-TestBudget $trim 100000000
+    $null = New-FlintPayload $trim
+    $baseChars = $trim.RequestChars
+    $trim.ModelCalls = 1
+    Add-FlintUsage $trim @{ input_tokens = 80000; output_tokens = 10 }
+    Set-TestBudget $trim 100000
+    $null = New-FlintPayload $trim
+    $count = $trim.OmittedOutputs.Count
+    Assert-True ($trim.EstimatedTokens -le 30001 -and $count -gt 0 -and $count -lt 20) ('Trim until the estimate reaches the target, and no further: ' + $count + ' omitted, ' + $trim.EstimatedTokens + ' tokens.')
+    Assert-True ($trim.TrimmedChars -eq ($baseChars - $trim.RequestChars) -and $trim.EstimatedTokens -eq (80000 - [long]($trim.TrimmedChars / 8) + 1)) 'Credit omitted characters at eight a token.'
+    $lastOmitted = 'page_' + $count
+    $trim.OmittedOutputs.Remove($lastOmitted)
+    $trim.TrimmedChars = 0L
+    $null = New-FlintPayload $trim
+    Assert-True ($trim.OmittedOutputs.ContainsKey($lastOmitted)) 'Trim again when the estimate climbs back above 60%.'
+
+    # Content added and omitted in one request is counted apart, so the two never cancel.
+    $mixed = New-TestSession
+    $mixed.History = @(@{ role = 'user'; content = 'Read.' })
+    foreach ($index in 1..4) {
+        $mixed.History += New-TestCall ('old_' + $index) 'read_file' ('{"path":"old' + $index + '.txt","start_line":1,"start_column":1,"max_lines":200}') @{ status = 'ok'; exit_code = 0; output = ('o' * 10000) }
+    }
+    $mixed.History += @{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = 'Read.' }) }
+    Set-TestBudget $mixed 100000000
+    $null = New-FlintPayload $mixed
+    $mixedChars = $mixed.RequestChars
+    $mixed.ModelCalls = 1
+    Add-FlintUsage $mixed @{ input_tokens = 20000; output_tokens = 10 }
+    $mixed.History += @{ role = 'user'; content = ('n' * 40000) }
+    Set-TestBudget $mixed 50000
+    $null = New-FlintPayload $mixed
+    $added = $mixed.RequestChars - $mixedChars + $mixed.TrimmedChars
+    Assert-True ($mixed.TrimmedChars -gt 0 -and $added -gt 40000 -and $mixed.EstimatedTokens -eq (20000 + [long]($added / 2) - [long]($mixed.TrimmedChars / 8) + 1)) 'Count content added and omitted in one request apart.'
+    Assert-True ($mixed.EstimatedTokens -gt 20000 + 15000) 'Do not let omissions cancel the content added since the measured request.'
+    Write-FlintCheckpoint $mixed
+    $mixedResumed = New-TestSession -Resume $mixed.Id
+    Assert-True ($mixedResumed.TrimmedChars -eq $mixed.TrimmedChars) 'Keep the omitted count across a resume.'
 
     # Redaction with newer credentials can shrink an omitted output; a recorded omission must still resume.
     $small = New-TestSession

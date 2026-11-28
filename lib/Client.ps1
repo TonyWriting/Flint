@@ -39,13 +39,15 @@ function New-FlintPayload {
     $estimate = Get-FlintTokenEstimate $Session $json.Length
     $omitted = @()
     if ($estimate -gt [long]($budget * 0.6)) {
-        # Omit outputs the model has read until the request is about 30% of the budget, in characters at the same rate.
-        $omitted = @(Compress-FlintContext $Session $json.Length ([long]($json.Length * $budget * 0.3 / $estimate)))
+        # Omit outputs the model has read until the estimate falls to about 30% of the budget.
+        $omitted = @(Compress-FlintContext $Session (Get-FlintTrimChars $Session $estimate ([long]($budget * 0.3))))
     }
     if ($omitted.Count -gt 0) {
         $before = $json.Length; $beforeTokens = $estimate
         $payload = New-FlintPayloadBody $Session
         $json = ConvertTo-Json -InputObject $payload -Depth 64 -Compress
+        # The estimate credits omitted characters apart from added ones, so it keeps count of them.
+        $Session.TrimmedChars = [long]$Session.TrimmedChars + $before - $json.Length
         $estimate = Get-FlintTokenEstimate $Session $json.Length
         Write-FlintEvent $Session 'context_compacted' @{
             call_ids = $omitted; request_chars_before = $before; request_chars_after = $json.Length
@@ -69,16 +71,26 @@ function New-FlintPayload {
 function Get-FlintTokenEstimate {
     param([hashtable]$Session, [long]$Chars)
     # The service reports the exact input tokens of every request, so the next request is that count plus what changed.
-    # Added characters count as one token per two: more than JSON and English take, and about what Chinese takes.
-    # Omitted characters count as one token per four, so trimming never makes the estimate fall short.
+    # Added characters count one token per two: more than JSON and English take, and about what Chinese takes.
+    # Omitted characters are credited at one token per eight, fewer than text, JSON or code usually take, so trimming
+    # does not make the estimate fall short. The two are counted apart, so adding and omitting in one request never cancel.
     if ($Session.LastInputTokens -gt 0 -and $Session.LastRequestChars -gt 0) {
-        $change = $Chars - $Session.LastRequestChars
-        if ($change -ge 0) { return [long]$Session.LastInputTokens + [long]($change / 2) + 1 }
-        $estimate = [long]$Session.LastInputTokens + [long]($change / 4) + 1
+        $trimmed = [long]$Session.TrimmedChars
+        $added = $Chars - $Session.LastRequestChars + $trimmed
+        if ($added -lt 0) { $added = 0 }
+        $estimate = [long]$Session.LastInputTokens + [long]($added / 2) - [long]($trimmed / 8) + 1
         if ($estimate -lt 1) { return 1 }
         return $estimate
     }
     return [long]($Chars / 2) + 1
+}
+
+function Get-FlintTrimChars {
+    param([hashtable]$Session, [long]$Estimate, [long]$Target)
+    # Characters to omit for the estimate to fall to the target, at the rate the estimate credits omissions.
+    $rate = 2
+    if ($Session.LastInputTokens -gt 0 -and $Session.LastRequestChars -gt 0) { $rate = 8 }
+    return ($Estimate - $Target) * $rate
 }
 
 function Invoke-FlintHttpRequest {
