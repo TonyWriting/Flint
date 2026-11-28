@@ -135,6 +135,21 @@ try {
     $answer = Invoke-AgentTurn $Session (Get-FlintContinuePrompt) 2
     $sent = @($Requests[-1].payload.input)
     Assert-True ($answer -ceq 'completed without errors.' -and $sent[1].role -ceq 'assistant' -and $sent[1].content.Contains('and the rollout') -and $sent[2].role -ceq 'developer') 'Send the partial text with the note when the user continues.'
+    # A cut-off answer can end inside a private key; it is redacted wherever the text goes.
+    Reset-TestConversation
+    $keyCut = @{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = ('Found:' + [Environment]::NewLine + '-----BEGIN ' + 'PRIVATE KEY-----' + [Environment]::NewLine + 'MIIEvQIBADANBgkqhkiG9w0') }) }
+    $script:Responses = @(@{ status = 'incomplete'; output = @($keyCut); incomplete_details = @{ reason = 'max_output_tokens' } })
+    $answer = Invoke-AgentTurn $Session 'Show the file.' 1
+    Assert-True ($answer.Contains('[redacted private key]') -and -not $answer.Contains('MIIEvQ')) 'Redact a private key that the output limit cut off.'
+    Assert-True (-not (ConvertTo-Json -InputObject @($Session.History) -Depth 8 -Compress).Contains('MIIEvQ') -and -not (Get-Content -LiteralPath $Session.TrajectoryPath -Raw).Contains('MIIEvQ')) 'Keep the cut-off key out of the conversation and the trajectory.'
+    # The partial answer marks the tool results before it as read, so continuing near the size limit can omit them.
+    Reset-TestConversation
+    $bigOutput = ConvertTo-Json -InputObject @{ status = 'ok'; output = ('x' * 5000) } -Compress
+    $Session.History = @(@{ role = 'user'; content = 'Read.' }, @{ type = 'function_call'; call_id = 'call_big'; name = 'read_file'; arguments = '{}' }, @{ type = 'function_call_output'; call_id = 'call_big'; output = $bigOutput })
+    $script:Responses = @(@{ status = 'incomplete'; output = @($partialReport); incomplete_details = @{ reason = 'max_output_tokens' } })
+    $null = Invoke-AgentTurn $Session 'Summarize.' 1
+    Assert-True ($Session.History[4].type -ceq 'message' -and (@(Compress-FlintContext $Session 2000000) -ccontains 'call_big')) 'Count a cut-off answer as having read the tool results before it.'
+    $Session.OmittedOutputs = @{}
     Reset-TestConversation
     $script:Responses = @((New-TestResponse @($read, $read)))
     Assert-Throws { Invoke-AgentTurn $Session 'Read.' 2 } '*duplicate*'

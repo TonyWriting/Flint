@@ -84,6 +84,9 @@ try {
     $safe = Protect-FlintText $Session 'api_key="hidden-one" password=hidden-two Authorization: Bearer hidden-three https://host/?sig=hidden-four&x=1 test-api-key'
     foreach ($secret in @('hidden-one', 'hidden-two', 'hidden-three', 'hidden-four', 'test-api-key')) { Assert-True (-not $safe.Contains($secret)) "Redact $secret."
     }
+    $begin = '-----BEGIN RSA ' + 'PRIVATE KEY-----'; $end = '-----END RSA ' + 'PRIVATE KEY-----'
+    $safe = Protect-FlintText $Session ("whole:`n$begin`nkey-one-body`n$end`nbetween`ncut:`n$begin`nkey-two-body-cut-off")
+    Assert-True ($safe -ceq "whole:`n[redacted private key]`nbetween`ncut:`n[redacted private key]") ('Redact whole private keys and a key that text cut off before its end: ' + $safe)
     # Tool arguments are refused only for Flint's own credentials, raw or JSON-escaped, never for credential-like field names.
     foreach ($arguments in @('{"content":"test-api-key"}', '{"content":"test-api-\u006bey"}', '{"content":"left\u001bright"}')) { Assert-True (Test-FlintUnsafeArguments $Session $arguments) ('Refuse arguments carrying the API key or a control character: ' + $arguments) }
     foreach ($arguments in @('{"content":"password: hunter2\ntoken: \"\""}', '{"content":"{\"secret\":{\"secretName\":\"tls\"}}"}', '{"content":"a\tb\r\nc \\u001b is text"}')) { Assert-True (-not (Test-FlintUnsafeArguments $Session $arguments)) ('Run configuration with credential-like names as written: ' + $arguments) }

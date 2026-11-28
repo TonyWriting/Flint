@@ -72,6 +72,8 @@ function Protect-FlintText {
     # A credential split by control sequences is whole again once they are removed.
     foreach ($secret in $Secrets) { $Text = $Text.Replace($secret, '[redacted]') }
     $Text = $Text -replace '(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----', '[redacted private key]'
+    # Text cut off by a page, preview or output limit can end inside a key; every whole block is already gone.
+    $Text = $Text -replace '(?is)-----BEGIN [^-]*PRIVATE KEY-----.*\z', '[redacted private key]'
     $Text = $Text -replace '(?i)\b(Bearer|Basic)\s+[A-Za-z0-9+/_.=~%-]+', '$1 [redacted]'
     $Text = $Text -replace '(?i)(https?://)[^\s/@]+:[^\s/@]+@', '$1[redacted]@'
     $Text = $Text -replace '(?i)(["'']?(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|(?<![a-z0-9])token|password|passwd|client[-_]?secret|secret|accountkey|sig|signature|authorization)["'']?\s*[:=]\s*)("[^"\r\n]*"|''[^''\r\n]*''|[^\s,;&}\r\n]+)', '$1"[redacted]"'
