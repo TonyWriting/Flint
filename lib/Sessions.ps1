@@ -1,8 +1,8 @@
 function New-AgentSession {
     param(
         [string]$ConfigFile,
-        [int]$RequestTimeoutSec = 180, [int]$ToolTimeoutSec = 30,
-        [int]$MaxToolCalls = 40, [int]$MaxOutputTokens = 4096,
+        [int]$RequestTimeoutSec = 300, [int]$ToolTimeoutSec = 30,
+        [int]$MaxToolCalls = 80, [int]$MaxOutputTokens = 16384,
         [int]$ContextWindow = 0, [string]$TrajectoryDirectory, [string]$Resume,
         [switch]$NoAzure, [ValidateRange(1, 8)][int]$MaxParallelTools = 4, [string]$PluginDirectory
     )
@@ -49,7 +49,7 @@ function New-AgentSession {
         CommandRules = @{ kubectl = $commandRules }; GuardedPatchResources = @($guarded | Sort-Object)
         Approvals = @{ kubectl = @(); azure = @(); files = @() }
         RequestTimeoutSec = $RequestTimeoutSec; ToolTimeoutSec = $ToolTimeoutSec
-        TurnLimit = 20
+        TurnLimit = 30
         MaxToolCalls = $MaxToolCalls; MaxParallelTools = $MaxParallelTools; MaxOutputTokens = $MaxOutputTokens
         ContextWindow = $ContextWindow; MaxRequestChars = 2000000; RequestChars = 0
         HistoryLogged = 0; OmittedOutputs = @{}; ContextWarned = $false

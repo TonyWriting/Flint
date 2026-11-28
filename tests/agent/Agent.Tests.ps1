@@ -11,7 +11,7 @@ function Invoke-RestMethod {
     param($Method, $Uri, $Headers, $TimeoutSec, $MaximumRedirection, $ErrorAction, $ContentType, $Body, $OutFile)
     Assert-True ($Method -eq 'Post' -and $Uri -eq 'https://test.services.ai.azure.com/openai/v1/responses' -and $Uri -ceq $script:Session.ApiEndpoint) 'POST directly to the configured Responses endpoint without appending another suffix.'
     Assert-True ($Headers.Authorization -eq 'Bearer test-api-key') 'Use the key only for authentication.'
-    Assert-True ($ContentType -eq 'application/json; charset=utf-8' -and $MaximumRedirection -eq 0 -and $TimeoutSec -gt 0 -and $TimeoutSec -le 180) 'Bound HTTP requests, disable redirects and use UTF-8.'
+    Assert-True ($ContentType -eq 'application/json; charset=utf-8' -and $MaximumRedirection -eq 0 -and $TimeoutSec -gt 0 -and $TimeoutSec -le 300) 'Bound HTTP requests, disable redirects and use UTF-8.'
     Assert-True (-not $Body.Contains('test-api-key')) 'Do not send the API key in model context.'
     $script:Requests += @{ payload = ConvertFrom-Json $Body; path = $OutFile }
     if ($script:Responses.Count -eq 0) { throw 'Unexpected model request.' }
@@ -52,7 +52,7 @@ try {
         Assert-True ($request.payload.tools.Count -eq 8 -and 'search_text' -in $request.payload.tools.name -and 'azure_request' -in $request.payload.tools.name) 'Use one file reader alongside text search and Azure requests.'
         Assert-True ((ConvertTo-Json -InputObject $request.payload.tools -Depth 16 -Compress) -ceq $stableTools) 'Keep tool definitions stable across requests.'
         Assert-True ($request.payload.instructions -ceq $Requests[0].payload.instructions) 'Keep the instruction prefix stable.'
-        Assert-True (-not $request.payload.stream -and -not $request.payload.store -and $request.payload.max_output_tokens -eq 4096) 'Bound output and use stateless requests.'
+        Assert-True (-not $request.payload.stream -and -not $request.payload.store -and $request.payload.max_output_tokens -eq 16384) 'Bound output and use stateless requests.'
         Assert-True (-not (Test-Path -LiteralPath $request.path)) 'Clean up response files.'
     }
     Assert-True ($Session.InputTokens -eq 30 -and $Session.OutputTokens -eq 15 -and $Session.CachedTokens -eq 9) 'Accumulate API usage, including cached tokens.'
@@ -112,9 +112,53 @@ try {
     $beforeIncomplete = Get-Content -LiteralPath (Join-Path $WorkRoot 'report.md') -Raw
     $incompleteWrite = @{ type = 'function_call'; call_id = 'incomplete_write'; name = 'write_file'; arguments = '{"path":"report.md","content":"must not be written"}' }
     $script:Responses = @(@{ status = 'incomplete'; output = @($incompleteWrite); incomplete_details = @{ reason = 'max_output_tokens' } })
-    Assert-Throws { Invoke-AgentTurn $Session 'Edit.' 2 } '*did not complete*'
-    Assert-True ($Session.History.Count -eq 1) 'Incomplete responses cannot invoke tools.'
+    Assert-Throws { Invoke-AgentTurn $Session 'Edit.' 2 } '*output limit of 16,384 tokens before any answer. Send /c to try again.*'
+    Assert-True ($Session.History.Count -eq 2 -and $Session.History[1].role -ceq 'developer' -and @($Session.History | Where-Object { $_.type -eq 'function_call' }).Count -eq 0) 'Incomplete responses cannot invoke tools, and a note tells the model why.'
     Assert-True ((Get-Content -LiteralPath (Join-Path $WorkRoot 'report.md') -Raw) -ceq $beforeIncomplete) 'Do not apply writes from incomplete model output.'
+    Reset-TestConversation
+    $script:Responses = @(@{ status = 'incomplete'; output = @($incompleteWrite); incomplete_details = @{ reason = 'content_filter' } })
+    Assert-Throws { Invoke-AgentTurn $Session 'Edit.' 2 } '*did not complete*content_filter*'
+    Assert-True ($Session.History.Count -eq 1) 'Other incomplete responses still end the turn without keeping output.'
+
+    # A response cut off at the output limit shows and keeps the text it has, and /c continues it.
+    Reset-TestConversation
+    $partialReport = @{ type = 'message'; role = 'assistant'; status = 'incomplete'; content = @(@{ type = 'output_text'; text = '## Report' + [Environment]::NewLine + 'Pods are healthy and the rollout' }) }
+    $script:Responses = @(@{ status = 'incomplete'; output = @($reasoning, $partialReport, $incompleteWrite); incomplete_details = @{ reason = 'max_output_tokens' }; usage = @{ input_tokens = 10; output_tokens = 16384 } })
+    $answer = Invoke-AgentTurn $Session 'Write the report.' 3
+    Assert-True ($answer.StartsWith('## Report') -and $answer.Contains('and the rollout') -and $answer.EndsWith('**The answer reached the output limit of 16,384 tokens and was cut off. Send /c to continue it.**')) ('Show the text written before the limit and how to continue: ' + $answer)
+    Assert-True ((Get-Content -LiteralPath (Join-Path $WorkRoot 'report.md') -Raw) -ceq $beforeIncomplete) 'Do not run a tool call from a cut-off response.'
+    $kept = @($Session.History)
+    Assert-True ($kept.Count -eq 3 -and $kept[1].role -ceq 'assistant' -and $kept[1].content -ceq ('## Report' + [Environment]::NewLine + 'Pods are healthy and the rollout') -and $kept[2].role -ceq 'developer' -and $kept[2].content.Contains('continue from where the text stopped')) 'Keep the partial text and a note for the model, without the cut-off tool call or reasoning.'
+    $stopped = @(Get-TestEvents | Where-Object { $_.event -eq 'turn_stopped' })[-1]
+    Assert-True ($stopped.data.reason -ceq 'output_limit') 'Record why the turn ended.'
+    $script:Responses = @((New-TestResponse @(@{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = 'completed without errors.' }) })))
+    $answer = Invoke-AgentTurn $Session (Get-FlintContinuePrompt) 2
+    $sent = @($Requests[-1].payload.input)
+    Assert-True ($answer -ceq 'completed without errors.' -and $sent[1].role -ceq 'assistant' -and $sent[1].content.Contains('and the rollout') -and $sent[2].role -ceq 'developer') 'Send the partial text with the note when the user continues.'
+    # A cut-off answer can end inside a private key; it is redacted wherever the text goes.
+    Reset-TestConversation
+    $keyCut = @{ type = 'message'; role = 'assistant'; content = @(@{ type = 'output_text'; text = ('Found:' + [Environment]::NewLine + '-----BEGIN ' + 'PRIVATE KEY-----' + [Environment]::NewLine + 'MIIEvQIBADANBgkqhkiG9w0') }) }
+    $script:Responses = @(@{ status = 'incomplete'; output = @($keyCut); incomplete_details = @{ reason = 'max_output_tokens' } })
+    $answer = Invoke-AgentTurn $Session 'Show the file.' 1
+    Assert-True ($answer.Contains('[redacted private key]') -and -not $answer.Contains('MIIEvQ')) 'Redact a private key that the output limit cut off.'
+    Assert-True (-not (ConvertTo-Json -InputObject @($Session.History) -Depth 8 -Compress).Contains('MIIEvQ') -and -not (Get-Content -LiteralPath $Session.TrajectoryPath -Raw).Contains('MIIEvQ')) 'Keep the cut-off key out of the conversation and the trajectory.'
+    Reset-TestConversation
+    $keyParts = @{ type = 'message'; role = 'assistant'; content = @(
+        @{ type = 'output_text'; text = ('Found:' + [Environment]::NewLine + '-----BEGIN ' + 'PRIVATE KEY-----' + [Environment]::NewLine + 'MIIEvQIBADANBgkq') },
+        @{ type = 'output_text'; text = 'SecondPartKeyBody0w0BAQEFAASCBKcw' }
+    ) }
+    $script:Responses = @(@{ status = 'incomplete'; output = @($keyParts); incomplete_details = @{ reason = 'max_output_tokens' } })
+    $answer = Invoke-AgentTurn $Session 'Show the file.' 1
+    $stored = (ConvertTo-Json -InputObject @($Session.History) -Depth 8 -Compress) + (Get-Content -LiteralPath $Session.TrajectoryPath -Raw)
+    Assert-True ($answer.StartsWith('Found:') -and -not $answer.Contains('SecondPartKeyBody') -and -not $stored.Contains('SecondPartKeyBody')) 'Redact a key that continues into the next text part of the same message.'
+    # The partial answer marks the tool results before it as read, so continuing near the size limit can omit them.
+    Reset-TestConversation
+    $bigOutput = ConvertTo-Json -InputObject @{ status = 'ok'; output = ('x' * 5000) } -Compress
+    $Session.History = @(@{ role = 'user'; content = 'Read.' }, @{ type = 'function_call'; call_id = 'call_big'; name = 'read_file'; arguments = '{}' }, @{ type = 'function_call_output'; call_id = 'call_big'; output = $bigOutput })
+    $script:Responses = @(@{ status = 'incomplete'; output = @($partialReport); incomplete_details = @{ reason = 'max_output_tokens' } })
+    $null = Invoke-AgentTurn $Session 'Summarize.' 1
+    Assert-True ($Session.History[4].type -ceq 'message' -and (@(Compress-FlintContext $Session 2000000) -ccontains 'call_big')) 'Count a cut-off answer as having read the tool results before it.'
+    $Session.OmittedOutputs = @{}
     Reset-TestConversation
     $script:Responses = @((New-TestResponse @($read, $read)))
     Assert-Throws { Invoke-AgentTurn $Session 'Read.' 2 } '*duplicate*'
