@@ -73,7 +73,10 @@ function New-AgentSession {
             if (-not $placeholder) { throw 'The saved conversation is invalid.' }
             $session.OmittedOutputs[[string]$item.call_id] = $placeholder.output
         }
-        if ($saved.model -cne $session.Model) { $session.LastInputTokens = $null; $session.LastOutputTokens = $null; $session.LastRequestChars = $null; $session.TrimmedChars = 0L; $session.EstimatedTokens = 0 }
+        if ($saved.model -cne $session.Model) { $session.LastInputTokens = $null; $session.LastOutputTokens = $null; $session.EstimatedTokens = 0 }
+        # Current plugins and redaction can change the instructions, tools and history, so the restored request is not the
+        # one the saved usage measured. The first request after a resume is estimated from its size alone.
+        $session.LastRequestChars = $null; $session.TrimmedChars = 0L
     }
     # Instructions and tools are logged once per process; model requests reference them.
     Write-FlintEvent $session $startEvent @{
@@ -115,7 +118,7 @@ function Get-FlintMessageText {
 
 function Get-FlintCheckpointFields {
     return @('ModelCalls', 'InputTokens', 'OutputTokens', 'CachedTokens', 'ReasoningTokens',
-        'UsageReports', 'CachedReported', 'ReasoningReported', 'LastInputTokens', 'LastOutputTokens', 'LastRequestChars', 'TrimmedChars', 'EstimatedTokens')
+        'UsageReports', 'CachedReported', 'ReasoningReported', 'LastInputTokens', 'LastOutputTokens', 'EstimatedTokens')
 }
 
 function Save-FlintHistory {

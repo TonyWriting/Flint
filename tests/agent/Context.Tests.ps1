@@ -161,7 +161,8 @@ try {
     Assert-True ($rate.RequestChars -gt $measured -and $rate.EstimatedTokens -eq ($reported + [long](($rate.RequestChars - $measured) / 2) + 1)) 'Add two characters a token for content added since the measured request.'
     Write-FlintCheckpoint $rate
     $rateResumed = New-TestSession -Resume $rate.Id
-    Assert-True ($rateResumed.LastRequestChars -eq $measured -and $rateResumed.LastInputTokens -eq $reported) 'Keep the measured request across a resume.'
+    $null = New-FlintPayload $rateResumed
+    Assert-True ($null -eq $rateResumed.LastRequestChars -and $rateResumed.EstimatedTokens -eq ([long]($rateResumed.RequestChars / 2) + 1)) 'Estimate the first request after a resume from its size alone, since plugins and redaction may have changed it.'
 
     # After reported usage, trimming stops where the estimate reaches the target, crediting omissions at eight characters a token.
     $trim = New-TestSession
@@ -206,7 +207,7 @@ try {
     Assert-True ($mixed.EstimatedTokens -gt 20000 + 15000) 'Do not let omissions cancel the content added since the measured request.'
     Write-FlintCheckpoint $mixed
     $mixedResumed = New-TestSession -Resume $mixed.Id
-    Assert-True ($mixedResumed.TrimmedChars -eq $mixed.TrimmedChars) 'Keep the omitted count across a resume.'
+    Assert-True ($mixedResumed.TrimmedChars -eq 0 -and $null -eq $mixedResumed.LastRequestChars) 'Start a resumed session without the previous process baseline.'
 
     # Redaction with newer credentials can shrink an omitted output; a recorded omission must still resume.
     $small = New-TestSession
