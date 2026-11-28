@@ -15,6 +15,19 @@
     return $payload
 }
 
+function Join-FlintMessageParts {
+    param($Item)
+    # Redaction works on one string at a time, so a credential split across the text parts of one message would leave
+    # the part without its start. A message made only of text parts becomes one part, joined as Flint displays it.
+    if ($Item.type -cne 'message' -or @($Item.content).Count -lt 2) { return $Item }
+    $texts = @($Item.content | Where-Object { $_.type -ceq 'output_text' })
+    if ($texts.Count -ne @($Item.content).Count) { return $Item }
+    $merged = [ordered]@{}
+    foreach ($property in @($Item.PSObject.Properties)) { $merged[$property.Name] = $property.Value }
+    $merged.content = @([ordered]@{ type = 'output_text'; text = (@($texts | ForEach-Object { [string]$_.text }) -join [Environment]::NewLine); annotations = @() })
+    return $merged
+}
+
 function New-FlintPayload {
     param([hashtable]$Session)
     # Log new conversation items before a compaction or request event refers to them.
@@ -148,6 +161,7 @@ function Invoke-AgentResponse {
                 $kept = [ordered]@{}
                 foreach ($property in @($response.PSObject.Properties)) { if ($property.Name -cnotin @('instructions', 'tools')) { $kept[$property.Name] = $property.Value } }
                 $response = $kept
+                if ($null -ne $response.output) { $response.output = @(foreach ($item in @($response.output)) { Join-FlintMessageParts $item }) }
             }
             $timing.read_ms = Get-FlintElapsedMs $readStarted
             $timing.attempt_ms = Get-FlintElapsedMs $attemptStarted

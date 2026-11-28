@@ -142,6 +142,15 @@ try {
     $answer = Invoke-AgentTurn $Session 'Show the file.' 1
     Assert-True ($answer.Contains('[redacted private key]') -and -not $answer.Contains('MIIEvQ')) 'Redact a private key that the output limit cut off.'
     Assert-True (-not (ConvertTo-Json -InputObject @($Session.History) -Depth 8 -Compress).Contains('MIIEvQ') -and -not (Get-Content -LiteralPath $Session.TrajectoryPath -Raw).Contains('MIIEvQ')) 'Keep the cut-off key out of the conversation and the trajectory.'
+    Reset-TestConversation
+    $keyParts = @{ type = 'message'; role = 'assistant'; content = @(
+        @{ type = 'output_text'; text = ('Found:' + [Environment]::NewLine + '-----BEGIN ' + 'PRIVATE KEY-----' + [Environment]::NewLine + 'MIIEvQIBADANBgkq') },
+        @{ type = 'output_text'; text = 'SecondPartKeyBody0w0BAQEFAASCBKcw' }
+    ) }
+    $script:Responses = @(@{ status = 'incomplete'; output = @($keyParts); incomplete_details = @{ reason = 'max_output_tokens' } })
+    $answer = Invoke-AgentTurn $Session 'Show the file.' 1
+    $stored = (ConvertTo-Json -InputObject @($Session.History) -Depth 8 -Compress) + (Get-Content -LiteralPath $Session.TrajectoryPath -Raw)
+    Assert-True ($answer.StartsWith('Found:') -and -not $answer.Contains('SecondPartKeyBody') -and -not $stored.Contains('SecondPartKeyBody')) 'Redact a key that continues into the next text part of the same message.'
     # The partial answer marks the tool results before it as read, so continuing near the size limit can omit them.
     Reset-TestConversation
     $bigOutput = ConvertTo-Json -InputObject @{ status = 'ok'; output = ('x' * 5000) } -Compress
